@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
+
 	"goleanauth/internal/apperror"
 	"goleanauth/internal/audit"
 	"goleanauth/pkg/db"
@@ -41,22 +43,30 @@ func (s *AuthService) Register(ctx context.Context, req RegisterRequest) error {
 			return apperror.ErrInternalServer
 		}
 
+		// Generate username
+		username, err := createUniqueUsername(dbCtx, tx)
+		if err != nil {
+			return err
+		}
+
 		// Create user and get the new user ID
 		var userID string
 
 		err = tx.QueryRowContext(dbCtx, `
-		INSERT INTO users (email, phone, password_hash, first_name, last_name)
+		INSERT INTO users (username, email, phone, password_hash)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, req.Email, req.Phone, hashedPassword, req.FirstName, req.LastName).Scan(&userID)
+	`, username, nullableString(req.Email), nullableString(req.Phone), string(hashedPassword)).Scan(&userID)
 		if err != nil {
-			if strings.Contains(err.Error(), "users_email_key") {
-				return apperror.ErrEmailAlreadyExists
+			var pqErr *pq.Error
+			if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+				switch {
+				case strings.Contains(pqErr.Constraint, "email"):
+					return apperror.ErrEmailAlreadyExists
+				case strings.Contains(pqErr.Constraint, "phone"):
+					return apperror.ErrPhoneAlreadyExists
+				}
 			}
-			if strings.Contains(err.Error(), "users_phone_key") {
-				return apperror.ErrPhoneAlreadyExists
-			}
-
 			return apperror.ErrDatabase
 		}
 
@@ -93,18 +103,35 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (string, stri
 	err := db.WithTransaction(dbCtx, s.DB, func(tx *sql.Tx) error {
 		var userID string
 		var passwordHash string
+		var status string
 
-		// Find user
-		err := tx.QueryRowContext(dbCtx, `
-		SELECT id, password_hash
-		FROM users
-		WHERE email = $1 OR phone = $1
-		`, req.Identifier).Scan(&userID, &passwordHash)
+		// detect identifier type and query the right column
+		var err error
+
+		if strings.Contains(req.Identifier, "@") {
+			err = tx.QueryRowContext(dbCtx, `
+                SELECT id, password_hash, status 
+								FROM users 
+								WHERE email = $1
+            `, req.Identifier).Scan(&userID, &passwordHash, &status)
+		} else {
+			err = tx.QueryRowContext(dbCtx, `
+                SELECT id, password_hash, status 
+								FROM users 
+								WHERE phone = $1
+            `, req.Identifier).Scan(&userID, &passwordHash, &status)
+		}
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return apperror.ErrUserNotFound
 			}
+
 			return apperror.ErrDatabase
+		}
+
+		// Check user status
+		if status != "active" {
+			return apperror.ErrUserSuspended
 		}
 
 		// Verify password
@@ -113,52 +140,14 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (string, stri
 			return apperror.ErrInvalidPassword
 		}
 
-		// Generate refresh token
-		refreshTokenBytes := make([]byte, 32)
-		_, err = rand.Read(refreshTokenBytes)
+		// Create session
+		accessToken, refreshToken, err = createSession(dbCtx, tx, userID, s.JWTSecret)
 		if err != nil {
-			return apperror.ErrInternalServer
-		}
-
-		refreshToken = hex.EncodeToString(refreshTokenBytes)
-
-		hashedRefreshToken, err := hashRefreshToken(refreshToken)
-		if err != nil {
-			return apperror.ErrInternalServer
-		}
-
-		// Create session and Store session
-		var sessionID string
-
-		err = tx.QueryRowContext(dbCtx, `
-		INSERT INTO sessions (user_id, refresh_token_hash, expires_at, revoked, created_at)
-		VALUES ($1, $2, $3, false, NOW())
-		RETURNING id
-	`,
-			userID,
-			hashedRefreshToken,
-			time.Now().Add(30*24*time.Hour),
-		).Scan(&sessionID)
-		if err != nil {
-			return apperror.ErrDatabase
-		}
-
-		// Create JWT access token
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"user_id":    userID,
-			"session_id": sessionID,
-			"exp":        time.Now().Add(15 * time.Minute).Unix(),
-		})
-
-		// Sign JWT
-		accessToken, err = token.SignedString(s.JWTSecret)
-		if err != nil {
-			return apperror.ErrInternalServer
+			return err
 		}
 
 		// Audit Log
-		err = s.AuditService.Log(dbCtx, tx, audit.LogEntry{
-			UserID:     &userID,
+		err = s.AuditService.Log(dbCtx, tx, audit.LogEntry{UserID: &userID,
 			Action:     "user.logged_in",
 			EntityType: "user",
 			EntityID:   &userID,
@@ -176,6 +165,16 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (string, stri
 	}
 
 	return accessToken, refreshToken, nil
+}
+
+// GoogleLogin exchanges the code for a Google user and logs them in
+func (s *AuthService) GoogleLogin(ctx context.Context, code string) (string, string, error) {
+	oauthUser, err := exchangeGoogleCode(ctx, code)
+	if err != nil {
+		return "", "", apperror.ErrInternalServer
+	}
+
+	return oauthLogin(ctx, s.DB, s.JWTSecret, s.AuditService, oauthUser)
 }
 
 // RefreshToken refreshes the session
@@ -390,4 +389,158 @@ func hashPassword(pw string) (string, error) {
 func hashRefreshToken(rt string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(rt), 12)
 	return string(bytes), err
+}
+
+// createUniqueUsername generates a unique username for the user
+func createUniqueUsername(ctx context.Context, tx *sql.Tx) (string, error) {
+	for range 5 {
+		username, err := generateUsername()
+		if err != nil {
+			return "", err
+		}
+
+		var exists bool
+		err = tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)`, username,
+		).Scan(&exists)
+		if err != nil {
+			return "", apperror.ErrDatabase
+		}
+		if !exists {
+			return username, nil
+		}
+	}
+	return "", apperror.ErrInternalServer
+}
+
+// nullableString returns a pointer to the string if it's not empty
+func nullableString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// oauthLogin is the shared core — provider-agnostic
+func oauthLogin(ctx context.Context, conn *sql.DB, jwtSecret []byte, auditService *audit.AuditService, ou OAuthUser) (string, string, error) {
+	var accessToken, refreshToken string
+
+	dbCtx, cancel := db.WithDBTimeout(ctx)
+	defer cancel()
+
+	err := db.WithTransaction(dbCtx, conn, func(tx *sql.Tx) error {
+		var userID, status string
+
+		err := tx.QueryRowContext(dbCtx, `
+            SELECT u.id, u.status
+            FROM users u
+            JOIN user_oauth_providers p ON p.user_id = u.id
+            WHERE p.provider = $1 AND p.provider_id = $2
+        `, ou.Provider, ou.ProviderID).Scan(&userID, &status)
+
+		if errors.Is(err, sql.ErrNoRows) {
+			emailErr := tx.QueryRowContext(dbCtx, `
+                SELECT id, status FROM users WHERE email = $1
+            `, ou.Email).Scan(&userID, &status)
+
+			if errors.Is(emailErr, sql.ErrNoRows) {
+				username, err := createUniqueUsername(dbCtx, tx)
+				if err != nil {
+					return err
+				}
+				err = tx.QueryRowContext(dbCtx, `
+                    INSERT INTO users (username, email, first_name, last_name, email_verified)
+                    VALUES ($1, $2, $3, $4, true)
+                    RETURNING id
+                `,
+					username,
+					nullableString(ou.Email),
+					nullableString(ou.FirstName),
+					nullableString(ou.LastName),
+				).Scan(&userID)
+				if err != nil {
+					return apperror.ErrDatabase
+				}
+				status = "active"
+			} else if emailErr != nil {
+				return apperror.ErrDatabase
+			}
+
+			_, err = tx.ExecContext(dbCtx, `
+                INSERT INTO user_oauth_providers (user_id, provider, provider_id)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (provider, provider_id) DO NOTHING
+            `, userID, ou.Provider, ou.ProviderID)
+			if err != nil {
+				return apperror.ErrDatabase
+			}
+		} else if err != nil {
+			return apperror.ErrDatabase
+		}
+
+		if status != "active" {
+			return apperror.ErrUserSuspended
+		}
+
+		var sessionErr error
+		accessToken, refreshToken, sessionErr = createSession(dbCtx, tx, userID, jwtSecret)
+		if sessionErr != nil {
+			return sessionErr
+		}
+
+		return auditService.Log(dbCtx, tx, audit.LogEntry{
+			UserID:     &userID,
+			Action:     "user.oauth_login",
+			EntityType: "user",
+			EntityID:   &userID,
+			Metadata:   map[string]any{"provider": ou.Provider},
+		})
+	})
+	if err != nil {
+		return "", "", err
+	}
+
+	return accessToken, refreshToken, nil
+}
+
+// createSession is shared — Login and OAuth both call this
+func createSession(ctx context.Context, tx *sql.Tx, userID string, jwtSecret []byte) (accessToken, refreshToken string, err error) {
+	refreshTokenBytes := make([]byte, 32)
+
+	if _, err = rand.Read(refreshTokenBytes); err != nil {
+		return "", "", apperror.ErrInternalServer
+	}
+
+	refreshToken = hex.EncodeToString(refreshTokenBytes)
+
+	hashedRefreshToken, err := bcrypt.GenerateFromPassword([]byte(refreshToken), bcrypt.DefaultCost)
+	if err != nil {
+		return "", "", apperror.ErrInternalServer
+	}
+
+	var sessionID string
+	err = tx.QueryRowContext(ctx, `
+        INSERT INTO sessions (user_id, refresh_token_hash, expires_at, revoked, created_at)
+        VALUES ($1, $2, $3, false, NOW())
+        RETURNING id
+    `,
+		userID,
+		string(hashedRefreshToken),
+		time.Now().Add(30*24*time.Hour),
+	).Scan(&sessionID)
+	if err != nil {
+		return "", "", apperror.ErrDatabase
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id":    userID,
+		"session_id": sessionID,
+		"exp":        time.Now().Add(15 * time.Minute).Unix(),
+	})
+	accessToken, err = token.SignedString(jwtSecret)
+	if err != nil {
+		return "", "", apperror.ErrInternalServer
+	}
+
+	return accessToken, refreshToken, nil
 }

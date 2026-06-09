@@ -11,8 +11,12 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- USER TABLE
+CREATE TYPE user_status AS ENUM ('active', 'suspended', 'deleted');
+
 CREATE TABLE users (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    username        TEXT UNIQUE NOT NULL,
 
     email           TEXT UNIQUE,
     phone           TEXT UNIQUE,
@@ -21,16 +25,16 @@ CREATE TABLE users (
 
     first_name      TEXT,
     last_name       TEXT,
-    date_of_birth   TIMESTAMP,
+    date_of_birth   DATE,
 
-    status          TEXT NOT NULL DEFAULT 'active',
+    status          user_status NOT NULL DEFAULT 'active',
     -- active | suspended | deleted
 
-    email_verified  BOOLEAN DEFAULT FALSE,
-    phone_verified  BOOLEAN DEFAULT FALSE,
+    email_verified  BOOLEAN NOT NULL DEFAULT FALSE,
+    phone_verified  BOOLEAN NOT NULL DEFAULT FALSE,
 
-    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     CHECK (email IS NOT NULL OR phone IS NOT NULL)
 );
@@ -46,6 +50,22 @@ CREATE INDEX idx_users_email
 ON users(email);
 CREATE INDEX idx_users_phone
 ON users(phone);
+CREATE INDEX idx_users_username
+ON users(username);
+
+-- USER OAUTH PROVIDERS
+CREATE TABLE user_oauth_providers (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider    TEXT NOT NULL,                -- 'google' | 'apple'
+    provider_id TEXT NOT NULL,               -- the ID from the provider
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (provider, provider_id)
+);
+
+-- USER OAUTH PROVIDERS INDEXES
+CREATE INDEX idx_oauth_providers_user_id 
+ON user_oauth_providers(user_id);
 
 -- SESSIONS (auth + device tracking)
 CREATE TABLE sessions (
