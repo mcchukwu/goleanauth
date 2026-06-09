@@ -23,6 +23,10 @@ type Config struct {
 	RefreshTokenTTLHours  int
 
 	CORSAllowedOrigins []string
+
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRedirectURL  string
 }
 
 func Load() *Config {
@@ -49,6 +53,9 @@ func Load() *Config {
 		AccessTokenTTLMinutes: accessTokenTTLMinutes,
 		RefreshTokenTTLHours:  refreshTokenTTLHours,
 		CORSAllowedOrigins:    strings.Split(getEnv("CORS_ALLOWED_ORIGINS", ""), ","),
+		GoogleClientID:        getEnv("GOOGLE_CLIENT_ID", ""),
+		GoogleClientSecret:    getEnv("GOOGLE_CLIENT_SECRET", ""),
+		GoogleRedirectURL:     getEnv("GOOGLE_REDIRECT_URL", ""),
 	}
 }
 
@@ -77,6 +84,18 @@ func (c *Config) Validate() error {
 		return errors.New("cors allowed origins is required")
 	}
 
+	if c.GoogleClientID == "" {
+		return errors.New("google client id is required")
+	}
+
+	if c.GoogleClientSecret == "" {
+		return errors.New("google client secret is required")
+	}
+
+	if c.GoogleRedirectURL == "" {
+		return errors.New("google redirect url is required")
+	}
+
 	return nil
 }
 
@@ -88,4 +107,3 @@ func getEnv(key, fallback string) string {
 	}
 	return val
 }
-
