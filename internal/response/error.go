@@ -102,4 +102,3 @@ func HandleError(w http.ResponseWriter, err error) {
 		Error(w, http.StatusInternalServerError, "internal_server_error", "internal server error")
 	}
 }
-

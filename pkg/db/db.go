@@ -10,6 +10,7 @@ import (
 
 var DB *sql.DB
 
+// Connect() takes a database connection string and returns a database connection pool manager
 func Connect(dsn string) error {
 	database, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -25,6 +26,7 @@ func Connect(dsn string) error {
 	defer cancel()
 
 	if err := database.PingContext(ctx); err != nil {
+		database.Close()
 		return err
 	}
 

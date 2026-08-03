@@ -11,24 +11,19 @@ import (
 )
 
 type Config struct {
-	AppEnv string
-
-	AppPort string
-
-	DatabaseURL string
-
-	JWTSecret string
-
-	AccessTokenTTLMinutes int
-	RefreshTokenTTLHours  int
-
-	CORSAllowedOrigins []string
-
-	GoogleClientID     string
-	GoogleClientSecret string
-	GoogleRedirectURL  string
+	AppEnv                string   `env:"APP_ENV"`
+	AppPort               string   `env:"APP_PORT"`
+	DBURL                 string   `env:"DB_URL"`
+	JWTSecret             string   `env:"JWT_SECRET"`
+	AccessTokenTTLMinutes int      `env:"ACCESS_TOKEN_TTL_MINUTES"`
+	RefreshTokenTTLHours  int      `env:"REFRESH_TOKEN_TTL_HOURS"`
+	CORSAllowedOrigins    []string `env:"CORS_ALLOWED_ORIGINS"`
+	GoogleClientID        string   `env:"GOOGLE_CLIENT_ID"`
+	GoogleClientSecret    string   `env:"GOOGLE_CLIENT_SECRET"`
+	GoogleRedirectURL     string   `env:"GOOGLE_REDIRECT_URL"`
 }
 
+// Load() loads the config from the environment and returns a Config struct
 func Load() *Config {
 	err := godotenv.Load()
 	if err != nil {
@@ -48,7 +43,7 @@ func Load() *Config {
 	return &Config{
 		AppEnv:                getEnv("APP_ENV", ""),
 		AppPort:               getEnv("APP_PORT", "8080"),
-		DatabaseURL:           getEnv("DATABASE_URL", ""),
+		DBURL:                 getEnv("DATABASE_URL", ""),
 		JWTSecret:             getEnv("JWT_SECRET", ""),
 		AccessTokenTTLMinutes: accessTokenTTLMinutes,
 		RefreshTokenTTLHours:  refreshTokenTTLHours,
@@ -59,6 +54,7 @@ func Load() *Config {
 	}
 }
 
+// Validate() validates the config
 func (c *Config) Validate() error {
 	if c.AppEnv != "production" && c.AppEnv != "development" {
 		return errors.New("invalid app env")
@@ -68,7 +64,7 @@ func (c *Config) Validate() error {
 		return errors.New("invalid app port")
 	}
 
-	if c.DatabaseURL == "" {
+	if c.DBURL == "" {
 		return errors.New("database url is required")
 	}
 
@@ -99,7 +95,10 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// helper function to get environment variable
+// -
+// Helpers
+// -
+// getEnv(key, fallback) helper function to get environment variable
 func getEnv(key, fallback string) string {
 	val := os.Getenv(key)
 	if val == "" {

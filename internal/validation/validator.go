@@ -4,11 +4,13 @@ import "github.com/go-playground/validator/v10"
 
 var Validate *validator.Validate
 
+// Init initializes the validator
 func Init() {
 	Validate = validator.New()
 	registerCustomValidations()
 }
 
+// ValidateStruct validates a struct and returns a map of field errors (if any)
 func ValidateStruct(data any) map[string]string {
 	err := Validate.Struct(data)
 	if err == nil {
@@ -22,6 +24,7 @@ func ValidateStruct(data any) map[string]string {
 	return fields
 }
 
+// mapValidationMessage maps a validator error to a user-friendly message
 func mapValidationMessage(e validator.FieldError) string {
 	switch e.Tag() {
 	case "required":

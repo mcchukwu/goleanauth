@@ -2,22 +2,28 @@ package main
 
 import (
 	"context"
-	"goleanauth/internal/auth"
-	"goleanauth/internal/handler"
-	"goleanauth/internal/middleware"
-	"goleanauth/internal/validation"
-	"goleanauth/pkg/config"
-	"goleanauth/pkg/db"
-	"goleanauth/pkg/logger"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"goleanauth/internal/auth"
+	"goleanauth/internal/health"
+	"goleanauth/internal/middleware"
+	"goleanauth/internal/validation"
+	"goleanauth/pkg/config"
+	"goleanauth/pkg/db"
+	"goleanauth/pkg/logger"
 )
 
 func main() {
 	cfg := config.Load()
+
+	if err := cfg.Validate(); err != nil {
+		logger.Error("Configuration validation failed")
+		os.Exit(1)
+	}
 
 	// Initialize shared packages
 	validation.Init()
@@ -26,7 +32,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Connect to database
-	if err := db.Connect(cfg.DatabaseURL); err != nil {
+	if err := db.Connect(cfg.DBURL); err != nil {
 		logger.Error("Failed to connect to database")
 		os.Exit(1)
 	}
@@ -60,11 +66,11 @@ func main() {
 	mux.Handle("POST /v1/auth/register", registerLimiterMiddleware.Limit(http.HandlerFunc(authHandler.Register)))
 	mux.Handle("POST /v1/auth/login", loginLimiterMiddleware.Limit(http.HandlerFunc(authHandler.Login)))
 
-	// oauth routes — Google and Apple follow the same callback pattern
+	// Oauth routes — Google and Apple follow the same callback pattern
 	mux.Handle("GET /v1/auth/google/callback", oauthLimiterMiddleware.Limit(http.HandlerFunc(authHandler.GoogleCallbackHandler)))
 
 	// Health check route (for load balancers)
-	healthHandler := handler.NewHealthHandler(db.DB)
+	healthHandler := health.NewHealthHandler(db.DB)
 
 	mux.HandleFunc("GET /v1/health", healthHandler.Health)
 	mux.HandleFunc("GET /v1/ready", healthHandler.Ready)
@@ -73,6 +79,7 @@ func main() {
 	// chain middleware
 	handlerChain := recoveryMiddleware.Recover((requestIDMiddleware.Assign(loggingMiddleware.Log(securityHeadersMiddleware.Secure(corsMiddleware.Cors(rateLimiterMiddleware.Limit(mux)))))))
 
+	// Start server safely
 	server := &http.Server{
 		Addr:         ":" + cfg.AppPort,
 		Handler:      handlerChain,
@@ -80,8 +87,6 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-
-	// Start server safely
 	go func() {
 		logger.Info("Server starting on port " + cfg.AppPort)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -95,22 +100,22 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	// Graceful shutdown context
+	// Shutdown server gracefully
 	logger.Info("Shutting down server")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Shutdown server
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Error("Graceful shutdown failed")
-
 		server.Close()
 	}
 
 	// Close database connection
+	logger.Info("Closing database connection")
 	if err := db.DB.Close(); err != nil {
 		logger.Error("Database connection close failed")
 	}
+	logger.Info("Database connection closed")
 
 	logger.Info("Server exiting gracefully")
 }

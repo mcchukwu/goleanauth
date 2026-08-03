@@ -16,6 +16,7 @@ func NewLoggingMiddleware() *LoggingMiddleware {
 	return &LoggingMiddleware{}
 }
 
+// Log logs the request
 func (m *LoggingMiddleware) Log(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -26,7 +27,10 @@ func (m *LoggingMiddleware) Log(next http.Handler) http.Handler {
 
 		duration := time.Since(start)
 
-		requestID := r.Context().Value(requestctx.RequestIDKey).(string)
+		requestID, ok := requestctx.RequestID(r.Context())
+		if !ok || requestID == "" {
+			requestID = "unknown"
+		}
 
 		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 
@@ -34,7 +38,9 @@ func (m *LoggingMiddleware) Log(next http.Handler) http.Handler {
 	})
 }
 
+// -----------------------------------------------------------------------------
 // --- ResponseRecorder ---
+// -----------------------------------------------------------------------------
 // ResponseRecorder is wrapper of http.ResponseWriter that provides additional information about written status code
 type ResponseRecorder struct {
 	http.ResponseWriter

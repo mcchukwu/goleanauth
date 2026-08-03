@@ -11,6 +11,7 @@ import (
 var ngPhoneRegex = regexp.MustCompile(`^\+234[7-9]\d{9}$`)
 var emailRegex = regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$`)
 
+// registerCustomValidations registers custom validations
 func registerCustomValidations() {
 	Validate.RegisterValidation("ngphone", validateNGPhone)
 	Validate.RegisterValidation("phone", validatePhone)

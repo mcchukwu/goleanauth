@@ -2,6 +2,7 @@ package normalize
 
 import "strings"
 
+// Identifier normalizes a phone number or email
 func Identifier(identifier, defaultRegion string) string {
 	identifier = strings.TrimSpace(identifier)
 	if strings.Contains(identifier, "@") {

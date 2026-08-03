@@ -53,10 +53,10 @@ func (s *AuthService) Register(ctx context.Context, req RegisterRequest) error {
 		var userID string
 
 		err = tx.QueryRowContext(dbCtx, `
-		INSERT INTO users (username, email, phone, password_hash)
+		INSERT INTO users (username, email, phone, password_hash, first_name, last_name)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, username, nullableString(req.Email), nullableString(req.Phone), string(hashedPassword)).Scan(&userID)
+	`, username, nullableString(req.Email), nullableString(req.Phone), string(hashedPassword), nullableString(req.FirstName), nullableString(req.LastName)).Scan(&userID)
 		if err != nil {
 			var pqErr *pq.Error
 			if errors.As(err, &pqErr) && pqErr.Code == "23505" {
@@ -147,7 +147,8 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (string, stri
 		}
 
 		// Audit Log
-		err = s.AuditService.Log(dbCtx, tx, audit.LogEntry{UserID: &userID,
+		err = s.AuditService.Log(dbCtx, tx, audit.LogEntry{
+			UserID:     &userID,
 			Action:     "user.logged_in",
 			EntityType: "user",
 			EntityID:   &userID,

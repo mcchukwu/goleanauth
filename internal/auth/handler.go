@@ -165,9 +165,9 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 // Logout invalidates the session
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	// Get session id
-	sessionID, ok := r.Context().Value(requestctx.SessionIDKey).(string)
-	if !ok {
-		response.HandleError(w, apperror.ErrExpiredToken)
+	sessionID, ok := requestctx.SessionID(r.Context())
+	if !ok || sessionID == "" {
+		response.HandleError(w, apperror.ErrInvalidToken)
 		return
 	}
 
@@ -193,9 +193,9 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 // LogoutAllDevices revokes all sessions for a user
 func (h *AuthHandler) LogoutAllDevices(w http.ResponseWriter, r *http.Request) {
-	// Find user
-	userID, ok := r.Context().Value(requestctx.UserIDKey).(string)
-	if !ok {
+	// Get user id
+	userID, ok := requestctx.UserID(r.Context())
+	if !ok || userID == "" {
 		response.HandleError(w, apperror.ErrUserNotFound)
 		return
 	}

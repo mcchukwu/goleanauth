@@ -24,6 +24,7 @@ func InitOAuth(cfg *config.Config) {
 	}
 }
 
+// exchangeGoogleCode exchanges the google code for a token and returns the user info
 func exchangeGoogleCode(ctx context.Context, code string) (OAuthUser, error) {
 	token, err := googleOAuthConfig.Exchange(ctx, code)
 	if err != nil {

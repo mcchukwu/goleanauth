@@ -11,6 +11,7 @@ type SuccessResponse struct {
 	Data    any    `json:"data,omitempty"`
 }
 
+// Success returns a success response
 func Success(w http.ResponseWriter, status int, message string, data any) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -22,4 +23,3 @@ func Success(w http.ResponseWriter, status int, message string, data any) {
 		Data:    data,
 	})
 }
-

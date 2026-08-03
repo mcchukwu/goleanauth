@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
+
 	"goleanauth/internal/apperror"
 	"goleanauth/internal/requestctx"
 	"goleanauth/internal/response"

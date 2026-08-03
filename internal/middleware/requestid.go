@@ -13,6 +13,7 @@ func NewRequestIDMiddleware() *RequestIDMiddleware {
 	return &RequestIDMiddleware{}
 }
 
+// Assign assigns a request id to the request context
 func (m *RequestIDMiddleware) Assign(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := uuid.NewString()

@@ -1,12 +1,13 @@
 package middleware
 
 import (
-	"goleanauth/internal/apperror"
-	"goleanauth/internal/response"
 	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"goleanauth/internal/apperror"
+	"goleanauth/internal/response"
 )
 
 type clientLimiter struct {
@@ -33,6 +34,7 @@ func NewRateLimiterMiddleware(maxRequests int, window time.Duration) *RateLimite
 	return rl
 }
 
+// Limit limits the number of requests per client
 func (rl *RateLimiterMiddleware) Limit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := getClientIP(r)
@@ -70,6 +72,7 @@ func (rl *RateLimiterMiddleware) Limit(next http.Handler) http.Handler {
 	})
 }
 
+// cleanup removes clients that haven't made a request in the last 10 minutes
 func (rl *RateLimiterMiddleware) cleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 
@@ -86,6 +89,7 @@ func (rl *RateLimiterMiddleware) cleanup() {
 	}
 }
 
+// getClientIP returns the client IP address
 func getClientIP(r *http.Request) string {
 	// reverse proxy support
 	forwarded := r.Header.Get(

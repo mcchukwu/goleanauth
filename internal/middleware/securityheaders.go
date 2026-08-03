@@ -8,6 +8,7 @@ func NewSecurityHeadersMiddleware() *SecurityHeadersMiddleware {
 	return &SecurityHeadersMiddleware{}
 }
 
+// Secure sets security headers
 func (m *SecurityHeadersMiddleware) Secure(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")

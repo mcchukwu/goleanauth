@@ -56,10 +56,14 @@ ON users(username);
 -- USER OAUTH PROVIDERS
 CREATE TABLE user_oauth_providers (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
     provider    TEXT NOT NULL,                -- 'google' | 'apple'
     provider_id TEXT NOT NULL,               -- the ID from the provider
+
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
     UNIQUE (provider, provider_id)
 );
 
@@ -79,10 +83,10 @@ CREATE TABLE sessions (
     ip_address          TEXT,
 
     revoked             BOOLEAN DEFAULT FALSE,
-    revoked_at          TIMESTAMP,
+    revoked_at          TIMESTAMPTZ,
 
-    expires_at          TIMESTAMP NOT NULL,
-    created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+    expires_at          TIMESTAMPTZ NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- SESSION INDEXES
@@ -106,7 +110,7 @@ CREATE TABLE audit_logs (
     ip_address      TEXT,
     user_agent      TEXT,
 
-    created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- AUDIT LOG INDEXES
