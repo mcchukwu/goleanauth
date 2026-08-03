@@ -88,7 +88,7 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 	go func() {
-		logger.Info("Server started on port", cfg.AppPort)
+		logger.Info("Server started on port %s", cfg.AppPort)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("Failed to start server")
 			os.Exit(1)
