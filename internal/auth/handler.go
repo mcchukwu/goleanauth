@@ -10,6 +10,8 @@ import (
 	"goleanauth/internal/response"
 	"goleanauth/internal/validation"
 	"goleanauth/pkg/config"
+
+	"golang.org/x/oauth2"
 )
 
 var cfg = config.Load()
@@ -101,11 +103,43 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GoogleLoginHandler handles the Google OAuth login
+func (h *AuthHandler) GoogleLoginHandler(w http.ResponseWriter, r *http.Request) {
+	state, err := generateState()
+	if err != nil {
+		response.HandleError(w, apperror.ErrInternalServer)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    state,
+		HttpOnly: true,
+		Secure:   cfg.AppEnv == "production",
+		Path:     "/",
+		MaxAge:   300,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	url := googleOAuthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
+
+	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+}
+
 // GoogleCallback handles the Google OAuth callback
 func (h *AuthHandler) GoogleCallbackHandler(w http.ResponseWriter, r *http.Request) {
+	state := r.URL.Query().Get("state")
 	code := r.URL.Query().Get("code")
-	if code == "" {
+
+	if code == "" || state == "" {
 		response.HandleError(w, apperror.ErrInvalidRequestBody)
+		return
+	}
+
+	// Validate state
+	cookie, err := r.Cookie("oauth_state")
+	if err != nil || cookie.Value != state {
+		response.HandleError(w, apperror.ErrUnauthorized)
 		return
 	}
 

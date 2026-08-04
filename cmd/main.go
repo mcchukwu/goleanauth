@@ -67,6 +67,7 @@ func main() {
 	mux.Handle("POST /v1/auth/login", loginLimiterMiddleware.Limit(http.HandlerFunc(authHandler.Login)))
 
 	// Oauth routes — Google and Apple follow the same callback pattern
+	mux.Handle("GET /v1/auth/google/login", oauthLimiterMiddleware.Limit(http.HandlerFunc(authHandler.GoogleLoginHandler)))
 	mux.Handle("GET /v1/auth/google/callback", oauthLimiterMiddleware.Limit(http.HandlerFunc(authHandler.GoogleCallbackHandler)))
 
 	// Health check route (for load balancers)

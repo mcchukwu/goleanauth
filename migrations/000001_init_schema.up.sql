@@ -21,7 +21,7 @@ CREATE TABLE users (
     email           TEXT UNIQUE,
     phone           TEXT UNIQUE,
 
-    password_hash   TEXT NOT NULL,
+    password_hash   TEXT,
 
     first_name      TEXT,
     last_name       TEXT,

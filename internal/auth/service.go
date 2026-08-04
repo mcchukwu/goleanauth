@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"strings"
@@ -416,6 +417,17 @@ func createUniqueUsername(ctx context.Context, tx *sql.Tx) (string, error) {
 	return "", apperror.ErrInternalServer
 }
 
+// generateState generates a random state string
+func generateState() (string, error) {
+	b := make([]byte, 32)
+
+	if _, err := rand.Read(b); err != nil {
+		return "", apperror.ErrInternalServer
+	}
+
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
 // nullableString returns a pointer to the string if it's not empty
 func nullableString(s string) *string {
 	if s == "" {
@@ -426,26 +438,23 @@ func nullableString(s string) *string {
 
 // oauthLogin is the shared core — provider-agnostic
 func oauthLogin(ctx context.Context, conn *sql.DB, jwtSecret []byte, auditService *audit.AuditService, ou OAuthUser) (string, string, error) {
-	var accessToken, refreshToken string
-
 	dbCtx, cancel := db.WithDBTimeout(ctx)
 	defer cancel()
 
+	var accessToken, refreshToken string
+
 	err := db.WithTransaction(dbCtx, conn, func(tx *sql.Tx) error {
 		var userID, status string
-
 		err := tx.QueryRowContext(dbCtx, `
             SELECT u.id, u.status
             FROM users u
             JOIN user_oauth_providers p ON p.user_id = u.id
             WHERE p.provider = $1 AND p.provider_id = $2
         `, ou.Provider, ou.ProviderID).Scan(&userID, &status)
-
 		if errors.Is(err, sql.ErrNoRows) {
 			emailErr := tx.QueryRowContext(dbCtx, `
                 SELECT id, status FROM users WHERE email = $1
             `, ou.Email).Scan(&userID, &status)
-
 			if errors.Is(emailErr, sql.ErrNoRows) {
 				username, err := createUniqueUsername(dbCtx, tx)
 				if err != nil {
@@ -469,6 +478,7 @@ func oauthLogin(ctx context.Context, conn *sql.DB, jwtSecret []byte, auditServic
 				return apperror.ErrDatabase
 			}
 
+			// Create user oauth provider
 			_, err = tx.ExecContext(dbCtx, `
                 INSERT INTO user_oauth_providers (user_id, provider, provider_id)
                 VALUES ($1, $2, $3)
@@ -491,13 +501,19 @@ func oauthLogin(ctx context.Context, conn *sql.DB, jwtSecret []byte, auditServic
 			return sessionErr
 		}
 
-		return auditService.Log(dbCtx, tx, audit.LogEntry{
+		// Audit Log
+		err = auditService.Log(dbCtx, tx, audit.LogEntry{
 			UserID:     &userID,
 			Action:     "user.oauth_login",
 			EntityType: "user",
 			EntityID:   &userID,
 			Metadata:   map[string]any{"provider": ou.Provider},
 		})
+		if err != nil {
+			return err
+		}
+
+		return nil
 	})
 	if err != nil {
 		return "", "", err
