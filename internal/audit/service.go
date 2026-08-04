@@ -3,7 +3,6 @@ package audit
 import (
 	"context"
 	"database/sql"
-
 	"goleanauth/internal/apperror"
 )
 
@@ -29,7 +28,7 @@ func (s *AuditService) Log(ctx context.Context, tx *sql.Tx, entry LogEntry) erro
 			ip_address, 
 			user_agent
 		)
-		VALUES ($1, $2, $3, $4)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`, entry.UserID, entry.Action, entry.Metadata, entry.EntityType, entry.EntityID, entry.ipAddress, entry.userAgent)
 	if err != nil {
 		return apperror.ErrDatabase

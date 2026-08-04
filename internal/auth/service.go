@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 
 	"goleanauth/internal/apperror"
@@ -27,8 +27,7 @@ type AuthService struct {
 func NewAuthService(db *sql.DB, secret []byte) *AuthService {
 	return &AuthService{
 		DB:        db,
-		JWTSecret: secret,
-	}
+		JWTSecret: secret}
 }
 
 // Register creates a new user account
@@ -54,16 +53,16 @@ func (s *AuthService) Register(ctx context.Context, req RegisterRequest) error {
 
 		err = tx.QueryRowContext(dbCtx, `
 		INSERT INTO users (username, email, phone, password_hash, first_name, last_name)
-		VALUES ($1, $2, $3, $4, $5)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id
 	`, username, nullableString(req.Email), nullableString(req.Phone), string(hashedPassword), nullableString(req.FirstName), nullableString(req.LastName)).Scan(&userID)
 		if err != nil {
-			var pqErr *pq.Error
+			var pqErr *pgconn.PgError
 			if errors.As(err, &pqErr) && pqErr.Code == "23505" {
 				switch {
-				case strings.Contains(pqErr.Constraint, "email"):
+				case strings.Contains(pqErr.ConstraintName, "email"):
 					return apperror.ErrEmailAlreadyExists
-				case strings.Contains(pqErr.Constraint, "phone"):
+				case strings.Contains(pqErr.ConstraintName, "phone"):
 					return apperror.ErrPhoneAlreadyExists
 				}
 			}
@@ -84,7 +83,6 @@ func (s *AuthService) Register(ctx context.Context, req RegisterRequest) error {
 
 		return nil
 	})
-
 	if err != nil {
 		return err
 	}
@@ -192,8 +190,12 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (st
 			SELECT id, refresh_token_hash, user_id
 			FROM sessions
 			WHERE revoked = false
-	`)
+		`)
 		if err != nil {
+			return apperror.ErrDatabase
+		}
+
+		if rows.Err() != nil {
 			return apperror.ErrDatabase
 		}
 
