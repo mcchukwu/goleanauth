@@ -21,12 +21,24 @@ func registerCustomValidations() {
 
 // validateNGPhone validates a Nigerian E.164 phone number.
 func validateNGPhone(fl validator.FieldLevel) bool {
-	return ngPhoneRegex.MatchString(fl.Field().String())
+	val := strings.TrimSpace(fl.Field().String())
+
+	if val == "" {
+		return true
+	}
+
+	return ngPhoneRegex.MatchString(val)
 }
 
 // validatePhone validates any international E.164 phone number.
 func validatePhone(fl validator.FieldLevel) bool {
-	_, err := phonenumbers.Parse(fl.Field().String(), "")
+	val := strings.TrimSpace(fl.Field().String())
+
+	if val == "" {
+		return true
+	}
+
+	_, err := phonenumbers.Parse(val, "")
 	return err == nil
 }
 
