@@ -1,0 +1,183 @@
+openapi: 3.1.0
+
+info:
+  title: GoleanAuth API
+  version: 1.0.0
+  summary: Production-grade authentication service.
+  description: |
+    GoleanAuth is a production-ready authentication service
+    supporting email/password authentication, OAuth providers,
+    JWT access tokens, refresh token rotation, session management,
+    audit logging, and enterprise-ready security.
+
+  contact:
+    name: Miracle Chukwu
+    email: support@goleanauth.dev
+
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local Development
+
+  - url: https://api.goleanauth.com
+    description: Production
+
+tags:
+  - name: Authentication
+    description: Email and password authentication.
+
+  - name: OAuth
+    description: OAuth authentication providers.
+
+  - name: Sessions
+    description: Refresh tokens and logout.
+
+  - name: Health
+    description: Health monitoring endpoints.
+
+components:
+
+  securitySchemes:
+
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: refresh_token
+
+components:
+
+  responses:
+
+    Unauthorized:
+      description: Authentication required.
+
+    Forbidden:
+      description: Access denied.
+
+    TooManyRequests:
+      description: Rate limit exceeded.
+
+    InternalServerError:
+      description: Internal server error.
+
+components:
+
+  schemas:
+
+    RegisterRequest:
+
+      type: object
+
+      properties:
+
+        email:
+          type: string
+          format: email
+          example: miracle@example.com
+
+        phone:
+          type: string
+          example: "+2348012345678"
+
+        first_name:
+          type: string
+          example: Miracle
+
+        last_name:
+          type: string
+          example: Chukwu
+
+        password:
+          type: string
+          format: password
+
+      required:
+        - password
+
+SuccessResponse:
+
+  type: object
+
+  properties:
+
+    success:
+      type: boolean
+      example: true
+
+    message:
+      type: string
+
+    data:
+      nullable: true
+
+ErrorResponse:
+
+  type: object
+
+  properties:
+
+    success:
+      type: boolean
+      example: false
+
+    error:
+
+      type: object
+
+      properties:
+
+        code:
+          type: string
+
+        message:
+          type: string
+
+ValidationErrorResponse:
+
+  type: object
+
+  properties:
+
+    success:
+      type: boolean
+
+    error:
+
+      type: object
+
+      properties:
+
+        code:
+          type: string
+
+        message:
+          type: string
+
+        fields:
+
+          type: object
+
+          additionalProperties:
+            type: string
+
+HealthResponse:
+
+  type: object
+
+  properties:
+
+    status:
+      type: string
+
+    database:
+      type: string
+
+    uptime:
+      type: string
