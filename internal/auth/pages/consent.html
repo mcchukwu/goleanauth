@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authorize {{.ClientName}}</title>
+  <style>
+    body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: #f5f6f8; margin: 0; }
+    .card { max-width: 460px; margin: 8vh auto; background: #fff; border-radius: 10px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    h1 { font-size: 20px; margin: 0 0 6px; }
+    p.sub { color: #555; margin: 0 0 20px; font-size: 14px; }
+    .scopes { border: 1px solid #e2e5ea; border-radius: 8px; padding: 4px 16px; margin: 0 0 20px; }
+    .scope { padding: 10px 0; border-bottom: 1px solid #f0f2f5; }
+    .scope:last-child { border-bottom: 0; }
+    .scope b { display: block; font-size: 14px; }
+    .scope span { font-size: 13px; color: #666; }
+    button { margin-top: 8px; padding: 10px 18px; border: 0; border-radius: 6px; font-size: 15px; cursor: pointer; }
+    .approve { background: #1a73e8; color: #fff; }
+    .deny { background: #fff; color: #444; border: 1px solid #d0d4da; margin-left: 10px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Allow <span id="client-name">{{.ClientName}}</span> to access your account?</h1>
+    <p class="sub">This will share the following information with {{.ClientName}} ({{.ClientID}}).</p>
+
+    <div class="scopes">
+      {{range .Scopes}}
+      <div class="scope">
+        <b>{{.Name}}</b>
+        <span>{{.Description}}</span>
+      </div>
+      {{end}}
+    </div>
+
+    <form method="post" action="/v1/oauth/approve">
+      <input type="hidden" name="client_id" value="{{.ClientID}}">
+      <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
+      <input type="hidden" name="scope" value="{{.Scope}}">
+      <input type="hidden" name="state" value="{{.State}}">
+      <button type="submit" name="decision" value="approve" class="approve">Allow</button>
+      <button type="submit" name="decision" value="deny" class="deny">Deny</button>
+    </form>
+  </div>
+</body>
+</html>

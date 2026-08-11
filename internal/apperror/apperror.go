@@ -44,9 +44,11 @@ var (
 	ErrRateLimited = errors.New("too many requests")
 
 	// OAUTH
-	ErrUnsupportedGrantType = errors.New("unsupported grant type")
-	ErrInvalidRequest       = errors.New("invalid request")
-	ErrInvalidScope         = errors.New("invalid scope")
+	ErrUnsupportedGrantType    = errors.New("unsupported grant type")
+	ErrInvalidRequest          = errors.New("invalid request")
+	ErrInvalidScope            = errors.New("invalid scope")
+	ErrUnsupportedResponseType = errors.New("unsupported response type")
+	ErrInvalidRedirectURI      = errors.New("invalid redirect uri")
 
 	// SYSTEM
 	ErrInternalServer = errors.New("internal server error")

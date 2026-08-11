@@ -38,14 +38,27 @@ func newTestOAuth(t *testing.T) (*OAuthService, sqlmock.Sqlmock) {
 }
 
 func mockClientAuth(mock sqlmock.Sqlmock, secret, scope string) {
-	rows := sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "client_secret_hash"}).
-		AddRow("client-1", "Test App", scope, true, hashClientSecret(secret))
+	rows := sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "client_secret_hash", "redirect_uris"}).
+		AddRow("client-1", "Test App", scope, true, hashClientSecret(secret), `{"http://app.test/cb"}`)
 	mock.ExpectQuery("FROM clients").WillReturnRows(rows)
 }
 
 func mockNoClient(mock sqlmock.Sqlmock) {
 	mock.ExpectQuery("FROM clients").
-		WillReturnRows(sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "client_secret_hash"}))
+		WillReturnRows(sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "client_secret_hash", "redirect_uris"}))
+}
+
+// mockClientGet returns a client via the public lookup with the given
+// redirect URIs (as a Postgres array literal) and allowed scope.
+func mockClientGet(mock sqlmock.Sqlmock, scope, redirectURIs string) {
+	rows := sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "redirect_uris"}).
+		AddRow("client-1", "Test App", scope, true, redirectURIs)
+	mock.ExpectQuery("FROM clients").WillReturnRows(rows)
+}
+
+func mockLoggedInSession(mock sqlmock.Sqlmock, userID string) {
+	rows := sqlmock.NewRows([]string{"user_id"}).AddRow(userID)
+	mock.ExpectQuery("FROM sessions").WillReturnRows(rows)
 }
 
 func TestOAuthTokenClientCredentials(t *testing.T) {
@@ -182,6 +195,127 @@ func TestOAuthIntrospectRefreshActive(t *testing.T) {
 	active, _ := info["active"].(bool)
 	if !active {
 		t.Error("Introspect() expected active=true for valid refresh token")
+	}
+}
+
+func TestOAuthIssueAuthorizationCode(t *testing.T) {
+	svc, mock := newTestOAuth(t)
+	mock.ExpectExec("INSERT INTO authorization_codes").WillReturnResult(sqlmock.NewResult(1, 1))
+
+	code, err := svc.IssueAuthorizationCode(context.Background(), "client-1", "user-1", "http://app.test/cb", "read")
+	if err != nil {
+		t.Fatalf("IssueAuthorizationCode() unexpected error: %v", err)
+	}
+	if len(code) < 32 {
+		t.Errorf("code too short: %d chars", len(code))
+	}
+}
+
+func TestOAuthTokenAuthorizationCode(t *testing.T) {
+	svc, mock := newTestOAuth(t)
+	mockClientAuth(mock, "topsecret", "read write")
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM authorization_codes").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "redirect_uri", "scope"}).
+			AddRow("user-1", "http://app.test/cb", "read"))
+	mock.ExpectExec("UPDATE authorization_codes").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("INSERT INTO sessions").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("session-1"))
+	mock.ExpectExec("INSERT INTO audit_logs").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	tokens, err := svc.Token(context.Background(), TokenRequest{
+		GrantType:    "authorization_code",
+		ClientID:     "client-1",
+		ClientSecret: "topsecret",
+		Code:         "some-auth-code",
+		RedirectURI:  "http://app.test/cb",
+	})
+	if err != nil {
+		t.Fatalf("Token() unexpected error: %v", err)
+	}
+	if tokens.AccessToken == "" || tokens.RefreshToken == "" {
+		t.Error("Token() returned empty tokens")
+	}
+	if tokens.Scope != "read" {
+		t.Errorf("Scope = %q, want read", tokens.Scope)
+	}
+}
+
+func TestOAuthTokenAuthorizationCodeReplay(t *testing.T) {
+	svc, mock := newTestOAuth(t)
+	mockClientAuth(mock, "topsecret", "read write")
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM authorization_codes").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "redirect_uri", "scope"}))
+	mock.ExpectRollback()
+
+	_, err := svc.Token(context.Background(), TokenRequest{
+		GrantType:    "authorization_code",
+		ClientID:     "client-1",
+		ClientSecret: "topsecret",
+		Code:         "used-or-expired-code",
+		RedirectURI:  "http://app.test/cb",
+	})
+	if !errors.Is(err, apperror.ErrInvalidToken) {
+		t.Fatalf("Token() error = %v, want %v", err, apperror.ErrInvalidToken)
+	}
+}
+
+func TestOAuthTokenAuthorizationCodeRedirectMismatch(t *testing.T) {
+	svc, mock := newTestOAuth(t)
+	mockClientAuth(mock, "topsecret", "read write")
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM authorization_codes").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "redirect_uri", "scope"}).
+			AddRow("user-1", "http://app.test/cb", "read"))
+	mock.ExpectRollback()
+
+	_, err := svc.Token(context.Background(), TokenRequest{
+		GrantType:    "authorization_code",
+		ClientID:     "client-1",
+		ClientSecret: "topsecret",
+		Code:         "some-auth-code",
+		RedirectURI:  "http://evil.test/cb",
+	})
+	if !errors.Is(err, apperror.ErrInvalidToken) {
+		t.Fatalf("Token() error = %v, want %v", err, apperror.ErrInvalidToken)
+	}
+}
+
+func TestOAuthValidateAuthorize(t *testing.T) {
+	svc, mock := newTestOAuth(t)
+	mockClientGet(mock, "read write", `{"http://app.test/cb"}`)
+
+	client, scope, err := svc.ValidateAuthorize(context.Background(), "client-1", "http://app.test/cb", "read")
+	if err != nil {
+		t.Fatalf("ValidateAuthorize() unexpected error: %v", err)
+	}
+	if client.ClientID != "client-1" {
+		t.Errorf("client id = %q", client.ClientID)
+	}
+	if scope != "read" {
+		t.Errorf("scope = %q, want read", scope)
+	}
+}
+
+func TestOAuthValidateAuthorizeUnregisteredRedirect(t *testing.T) {
+	svc, mock := newTestOAuth(t)
+	mockClientGet(mock, "read write", `{"http://app.test/cb"}`)
+
+	_, _, err := svc.ValidateAuthorize(context.Background(), "client-1", "http://evil.test/cb", "read")
+	if !errors.Is(err, apperror.ErrInvalidRedirectURI) {
+		t.Fatalf("ValidateAuthorize() error = %v, want %v", err, apperror.ErrInvalidRedirectURI)
+	}
+}
+
+func TestOAuthValidateAuthorizeScopeDenied(t *testing.T) {
+	svc, mock := newTestOAuth(t)
+	mockClientGet(mock, "read write", `{"http://app.test/cb"}`)
+
+	_, _, err := svc.ValidateAuthorize(context.Background(), "client-1", "http://app.test/cb", "admin")
+	if !errors.Is(err, apperror.ErrInvalidScope) {
+		t.Fatalf("ValidateAuthorize() error = %v, want %v", err, apperror.ErrInvalidScope)
 	}
 }
 

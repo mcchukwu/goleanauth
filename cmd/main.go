@@ -86,7 +86,7 @@ func main() {
 	authHandler := auth.NewAuthHandler(authService, cfg)
 	clientService := auth.NewClientService(db.DB)
 	oauthService := auth.NewOAuthService(db.DB, keys, clientService, auditService, cfg)
-	oauthHandler := auth.NewOAuthHandler(oauthService, cfg)
+	oauthHandler := auth.NewOAuthHandler(oauthService, authService, cfg)
 
 	// Protected routes
 	mux.Handle("POST /v1/auth/refresh", authMiddleware.RequireAuth(refreshLimiterMiddleware.Limit(http.HandlerFunc(authHandler.RefreshToken))))
@@ -106,6 +106,12 @@ func main() {
 	mux.Handle("POST /v1/oauth/revoke", oauthLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.Revoke)))
 	mux.Handle("POST /v1/oauth/introspect", oauthLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.Introspect)))
 	mux.Handle("GET /v1/userinfo", authMiddleware.RequireAuth(http.HandlerFunc(oauthHandler.UserInfo)))
+
+	// Interactive authorization code flow
+	mux.Handle("GET /v1/oauth/authorize", oauthLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.Authorize)))
+	mux.Handle("POST /v1/oauth/approve", oauthLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.ConsentApprove)))
+	mux.Handle("GET /login", loginLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.LoginForm)))
+	mux.Handle("POST /login", loginLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.LoginSubmit)))
 
 	// Well-known discovery
 	mux.HandleFunc("GET /.well-known/openid-configuration", oauthHandler.Discovery)

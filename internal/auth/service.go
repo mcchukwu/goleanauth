@@ -267,6 +267,38 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (st
 	return newAccessToken, newRefreshToken, nil
 }
 
+// LookupSessionUser resolves a refresh token to an active user session. It is
+// read-only: it is used by the interactive authorize flow to determine whether
+// the browser holds a valid login without rotating the session.
+func (s *AuthService) LookupSessionUser(ctx context.Context, refreshToken string) (string, error) {
+	if refreshToken == "" {
+		return "", apperror.ErrInvalidToken
+	}
+
+	dbCtx, cancel := db.WithDBTimeout(ctx)
+	defer cancel()
+
+	var userID sql.NullString
+	err := s.DB.QueryRowContext(dbCtx, `
+		SELECT s.user_id
+		FROM sessions s
+		JOIN users u ON u.id = s.user_id
+		WHERE s.refresh_token_hash = $1
+		  AND s.user_id IS NOT NULL
+		  AND s.revoked = false
+		  AND s.expires_at > NOW()
+		  AND u.status = 'active'
+	`, hashRefreshToken(refreshToken)).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) || !userID.Valid {
+		return "", apperror.ErrInvalidToken
+	}
+	if err != nil {
+		return "", apperror.ErrDatabase
+	}
+
+	return userID.String, nil
+}
+
 // Logout revokes sessions for a user's device
 func (s *AuthService) Logout(ctx context.Context, sessionID string) error {
 	dbCtx, cancel := db.WithDBTimeout(ctx)

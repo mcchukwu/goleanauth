@@ -2,7 +2,10 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -44,6 +47,8 @@ type TokenRequest struct {
 	ClientID     string
 	ClientSecret string
 	RefreshToken string
+	Code         string
+	RedirectURI  string
 	Scope        string
 }
 
@@ -68,6 +73,8 @@ func (s *OAuthService) Token(ctx context.Context, req TokenRequest) (TokenSet, e
 		return s.tokenClientCredentials(ctx, client, req.Scope)
 	case "refresh_token":
 		return s.tokenRefresh(ctx, client, req.RefreshToken)
+	case "authorization_code":
+		return s.tokenAuthorizationCode(ctx, client, req.Code, req.RedirectURI)
 	default:
 		return TokenSet{}, apperror.ErrUnsupportedGrantType
 	}
@@ -180,6 +187,154 @@ func (s *OAuthService) tokenRefresh(ctx context.Context, client Client, refreshT
 	}
 
 	return tokens, nil
+}
+
+// tokenAuthorizationCode exchanges an authorization code for tokens. Codes are
+// single-use and bound to the client, user, redirect URI, and scope recorded at
+// issuance time.
+func (s *OAuthService) tokenAuthorizationCode(ctx context.Context, client Client, code, redirectURI string) (TokenSet, error) {
+	if code == "" || redirectURI == "" {
+		return TokenSet{}, apperror.ErrInvalidRequest
+	}
+
+	var tokens TokenSet
+
+	dbCtx, cancel := db.WithDBTimeout(ctx)
+	defer cancel()
+
+	err := db.WithTransaction(dbCtx, s.DB, func(tx *sql.Tx) error {
+		var userID, codeRedirectURI, scope string
+
+		err := tx.QueryRowContext(dbCtx, `
+			SELECT ac.user_id, ac.redirect_uri, ac.scope
+			FROM authorization_codes ac
+			JOIN users u ON u.id = ac.user_id
+			WHERE ac.code_hash = $1
+			  AND ac.client_id = $2
+			  AND ac.used = false
+			  AND ac.expires_at > NOW()
+			  AND u.status = 'active'
+		`, hashAuthorizationCode(code), client.ClientID).Scan(&userID, &codeRedirectURI, &scope)
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperror.ErrInvalidToken
+		}
+		if err != nil {
+			return apperror.ErrDatabase
+		}
+
+		if codeRedirectURI != redirectURI {
+			return apperror.ErrInvalidToken
+		}
+
+		// Single-use: mark consumed before issuing tokens so a replayed code
+		// (even in a concurrent request) is rejected.
+		_, err = tx.ExecContext(dbCtx, `
+			UPDATE authorization_codes
+			SET used = true
+			WHERE code_hash = $1
+		`, hashAuthorizationCode(code))
+		if err != nil {
+			return apperror.ErrDatabase
+		}
+
+		var accessToken, refreshToken string
+		_, accessToken, refreshToken, err = createSession(dbCtx, tx, userID, &client.ClientID, scope, s.Keys, s.Issuer, s.AccessTokenTTL, s.RefreshTokenTTL)
+		if err != nil {
+			return err
+		}
+
+		tokens = TokenSet{
+			AccessToken:  accessToken,
+			TokenType:    "Bearer",
+			ExpiresIn:    int64(s.AccessTokenTTL.Seconds()),
+			RefreshToken: refreshToken,
+			Scope:        scope,
+		}
+
+		return s.AuditService.Log(dbCtx, tx, audit.LogEntry{
+			UserID:     &userID,
+			Action:     "client.token_issued",
+			EntityType: "client",
+			EntityID:   &client.ClientID,
+			Metadata:   map[string]any{"grant_type": "authorization_code", "scope": scope},
+		})
+	})
+	if err != nil {
+		return TokenSet{}, err
+	}
+
+	return tokens, nil
+}
+
+// authorizationCodeTTL is how long an issued code remains redeemable.
+const authorizationCodeTTL = 10 * time.Minute
+
+// ValidateAuthorize validates an authorization request against the registered
+// client and returns the client and the granted scope. The caller renders a
+// consent page or an error from the result.
+func (s *OAuthService) ValidateAuthorize(ctx context.Context, clientID, redirectURI, requestedScope string) (Client, string, error) {
+	client, err := s.Clients.Get(ctx, clientID)
+	if errors.Is(err, apperror.ErrClientNotFound) {
+		return Client{}, "", apperror.ErrInvalidClientCredentials
+	}
+	if err != nil {
+		return Client{}, "", err
+	}
+	if !client.Active {
+		return Client{}, "", apperror.ErrClientInactive
+	}
+
+	if !s.redirectURIRegistered(client.RedirectURIs, redirectURI) {
+		return Client{}, "", apperror.ErrInvalidRedirectURI
+	}
+
+	scope, err := intersectScope(client.Scope, requestedScope)
+	if err != nil {
+		return Client{}, "", err
+	}
+
+	return client, scope, nil
+}
+
+// redirectURIRegistered reports whether the presented redirect URI exactly
+// matches one of the client's registered redirect URIs.
+func (s *OAuthService) redirectURIRegistered(registered []string, redirectURI string) bool {
+	for _, u := range registered {
+		if u == redirectURI {
+			return true
+		}
+	}
+	return false
+}
+
+// IssueAuthorizationCode creates a single-use, short-lived authorization code
+// bound to the client, user, redirect URI, and granted scope.
+func (s *OAuthService) IssueAuthorizationCode(ctx context.Context, clientID, userID, redirectURI, scope string) (string, error) {
+	codeBytes := make([]byte, 32)
+	if _, err := rand.Read(codeBytes); err != nil {
+		return "", apperror.ErrInternalServer
+	}
+	code := hex.EncodeToString(codeBytes)
+
+	dbCtx, cancel := db.WithDBTimeout(ctx)
+	defer cancel()
+
+	_, err := s.DB.ExecContext(dbCtx, `
+		INSERT INTO authorization_codes (code_hash, client_id, user_id, redirect_uri, scope, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, hashAuthorizationCode(code), clientID, userID, redirectURI, scope, time.Now().Add(authorizationCodeTTL))
+	if err != nil {
+		return "", apperror.ErrDatabase
+	}
+
+	return code, nil
+}
+
+// hashAuthorizationCode hashes an authorization code with SHA-256 so only the
+// digest is persisted, mirroring refresh-token handling.
+func hashAuthorizationCode(code string) string {
+	sum := sha256.Sum256([]byte(code))
+	return hex.EncodeToString(sum[:])
 }
 
 // Introspect validates an access token (JWT) or refresh token and returns its

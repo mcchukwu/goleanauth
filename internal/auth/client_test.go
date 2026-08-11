@@ -57,8 +57,8 @@ func TestAuthenticateClientSuccess(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	const secret = "my-secret-value"
-	rows := sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "client_secret_hash"}).
-		AddRow("client-1", "My App", "read write", true, hashClientSecret(secret))
+	rows := sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "client_secret_hash", "redirect_uris"}).
+		AddRow("client-1", "My App", "read write", true, hashClientSecret(secret), `{"http://app.test/cb"}`)
 	mock.ExpectQuery("FROM clients").WillReturnRows(rows)
 
 	svc := NewClientService(db)
@@ -79,8 +79,8 @@ func TestAuthenticateClientInactive(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	const secret = "my-secret-value"
-	rows := sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "client_secret_hash"}).
-		AddRow("client-1", "My App", "", false, hashClientSecret(secret))
+	rows := sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "client_secret_hash", "redirect_uris"}).
+		AddRow("client-1", "My App", "", false, hashClientSecret(secret), `{}`)
 	mock.ExpectQuery("FROM clients").WillReturnRows(rows)
 
 	_, err = NewClientService(db).Authenticate(context.Background(), "client-1", secret)
@@ -96,13 +96,41 @@ func TestAuthenticateClientWrongSecret(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	rows := sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "client_secret_hash"}).
-		AddRow("client-1", "My App", "", true, hashClientSecret("real-secret"))
+	rows := sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "client_secret_hash", "redirect_uris"}).
+		AddRow("client-1", "My App", "", true, hashClientSecret("real-secret"), `{}`)
 	mock.ExpectQuery("FROM clients").WillReturnRows(rows)
 
 	_, err = NewClientService(db).Authenticate(context.Background(), "client-1", "wrong-secret")
 	if !errors.Is(err, apperror.ErrInvalidClientCredentials) {
 		t.Fatalf("Authenticate() error = %v, want %v", err, apperror.ErrInvalidClientCredentials)
+	}
+}
+
+func TestStringArrayRoundTrip(t *testing.T) {
+	in := []string{"http://app.test/cb", "http://app.test/alt,cb", `http://with"quote.test/`}
+	lit := arrayLiteral(in)
+
+	var out StringArray
+	if err := out.Scan(lit); err != nil {
+		t.Fatalf("Scan() unexpected error: %v", err)
+	}
+	if len(out) != len(in) {
+		t.Fatalf("lengths differ: got %d want %d", len(out), len(in))
+	}
+	for i := range in {
+		if out[i] != in[i] {
+			t.Errorf("element %d = %q, want %q", i, out[i], in[i])
+		}
+	}
+}
+
+func TestStringArrayEmpty(t *testing.T) {
+	var out StringArray
+	if err := out.Scan("{}"); err != nil {
+		t.Fatalf("Scan() unexpected error: %v", err)
+	}
+	if out != nil {
+		t.Errorf("Scan({}) = %v, want nil", out)
 	}
 }
 
@@ -114,7 +142,7 @@ func TestAuthenticateClientUnknown(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	mock.ExpectQuery("FROM clients").
-		WillReturnRows(sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "client_secret_hash"}))
+		WillReturnRows(sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "client_secret_hash", "redirect_uris"}))
 
 	_, err = NewClientService(db).Authenticate(context.Background(), "unknown", "secret")
 	if !errors.Is(err, apperror.ErrInvalidClientCredentials) {
