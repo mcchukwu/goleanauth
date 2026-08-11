@@ -25,6 +25,11 @@ type Config struct {
 	GoogleClientSecret    string   `env:"GOOGLE_CLIENT_SECRET"`
 	GoogleRedirectURL     string   `env:"GOOGLE_REDIRECT_URL"`
 	AdminAPIKey           string   `env:"ADMIN_API_KEY"`
+	AppleClientID         string   `env:"APPLE_CLIENT_ID"`
+	AppleTeamID           string   `env:"APPLE_TEAM_ID"`
+	AppleKeyID            string   `env:"APPLE_KEY_ID"`
+	ApplePrivateKey       string   `env:"APPLE_PRIVATE_KEY"`
+	AppleRedirectURL      string   `env:"APPLE_REDIRECT_URL"`
 }
 
 // Load() loads the config from the environment and returns a Config struct
@@ -64,6 +69,11 @@ func Load() *Config {
 		GoogleClientSecret:    getEnv("GOOGLE_CLIENT_SECRET", ""),
 		GoogleRedirectURL:     getEnv("GOOGLE_REDIRECT_URL", ""),
 		AdminAPIKey:           getEnv("ADMIN_API_KEY", ""),
+		AppleClientID:         getEnv("APPLE_CLIENT_ID", ""),
+		AppleTeamID:           getEnv("APPLE_TEAM_ID", ""),
+		AppleKeyID:            getEnv("APPLE_KEY_ID", ""),
+		ApplePrivateKey:       getEnv("APPLE_PRIVATE_KEY", ""),
+		AppleRedirectURL:      getEnv("APPLE_REDIRECT_URL", ""),
 	}
 }
 

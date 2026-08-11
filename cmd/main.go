@@ -29,7 +29,10 @@ func main() {
 
 	// Initialize shared packages
 	validation.Init()
-	auth.InitOAuth(cfg)
+	if err := auth.InitOAuth(cfg); err != nil {
+		logger.Error("OAuth provider configuration failed: %s", err)
+		os.Exit(1)
+	}
 
 	// Build the signing key set. In development an ephemeral key is generated
 	// when one is not configured (tokens will be invalidated on restart).
@@ -102,6 +105,8 @@ func main() {
 	// Oauth routes — Google and Apple follow the same callback pattern
 	mux.Handle("GET /v1/auth/google/login", oauthLimiterMiddleware.Limit(http.HandlerFunc(authHandler.GoogleLoginHandler)))
 	mux.Handle("GET /v1/auth/google/callback", oauthLimiterMiddleware.Limit(http.HandlerFunc(authHandler.GoogleCallbackHandler)))
+	mux.Handle("GET /v1/auth/apple/login", oauthLimiterMiddleware.Limit(http.HandlerFunc(authHandler.AppleLoginHandler)))
+	mux.Handle("GET /v1/auth/apple/callback", oauthLimiterMiddleware.Limit(http.HandlerFunc(authHandler.AppleCallbackHandler)))
 
 	// OAuth 2.0 / OIDC endpoints for registered clients
 	mux.Handle("POST /v1/oauth/token", oauthLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.Token)))

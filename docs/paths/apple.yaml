@@ -1,0 +1,66 @@
+/v1/auth/apple/login:
+  get:
+    tags:
+      - OAuth
+
+    summary: Start Sign in with Apple
+
+    description: |
+      Redirects the browser to Apple's authorization endpoint. Requires
+      `APPLE_CLIENT_ID` to be configured.
+
+    operationId: appleLogin
+
+    responses:
+
+      "307":
+
+        description: Redirect to Apple
+
+      "400":
+
+        description: Apple sign-in not configured
+
+/v1/auth/apple/callback:
+  get:
+    tags:
+      - OAuth
+
+    summary: Complete Sign in with Apple
+
+    description: |
+      Handles Apple's callback, exchanges the code, and issues tokens.
+      On success the refresh token is set as an HttpOnly cookie and the
+      access token is returned in the response body.
+
+    operationId: appleCallback
+
+    parameters:
+
+      - name: code
+        in: query
+        required: true
+        schema:
+          type: string
+
+      - name: state
+        in: query
+        required: true
+        schema:
+          type: string
+
+      - name: user
+        in: query
+        schema:
+          type: string
+          description: JSON user payload, present on the first authorization only.
+
+    responses:
+
+      "200":
+
+        description: Login successful
+
+      "401":
+
+        description: State mismatch

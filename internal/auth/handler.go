@@ -166,6 +166,66 @@ func (h *AuthHandler) GoogleCallbackHandler(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// AppleLoginHandler starts the Sign in with Apple flow.
+func (h *AuthHandler) AppleLoginHandler(w http.ResponseWriter, r *http.Request) {
+	state, err := generateState()
+	if err != nil {
+		response.HandleError(w, apperror.ErrInternalServer)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    state,
+		HttpOnly: true,
+		Secure:   h.cfg.AppEnv == "production",
+		Path:     "/",
+		MaxAge:   300,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	http.Redirect(w, r, appleAuthorizeURL(state), http.StatusTemporaryRedirect)
+}
+
+// AppleCallbackHandler handles the Sign in with Apple callback.
+func (h *AuthHandler) AppleCallbackHandler(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	state := q.Get("state")
+	code := q.Get("code")
+
+	if code == "" || state == "" {
+		response.HandleError(w, apperror.ErrInvalidRequestBody)
+		return
+	}
+
+	// Validate state
+	cookie, err := r.Cookie("oauth_state")
+	if err != nil || cookie.Value != state {
+		response.HandleError(w, apperror.ErrUnauthorized)
+		return
+	}
+
+	accessToken, refreshToken, err := h.AuthService.AppleLogin(r.Context(), code, q.Get("user"))
+	if err != nil {
+		response.HandleError(w, err)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    refreshToken,
+		HttpOnly: true,
+		Secure:   h.cfg.AppEnv == "production",
+		Path:     "/",
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   h.cfg.RefreshTokenTTLHours * 3600,
+	})
+
+	response.Success(w, http.StatusOK, "login successful", map[string]any{
+		"access_token": accessToken,
+	})
+}
+
 // RefreshToken refreshes the session
 func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	// Read cookie

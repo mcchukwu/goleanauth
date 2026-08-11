@@ -188,6 +188,35 @@ func (s *AuthService) GoogleLogin(ctx context.Context, code string) (string, str
 	return oauthLogin(ctx, s.DB, s.Keys, s.Issuer, s.AuditService, s.AccessTokenTTL, s.RefreshTokenTTL, oauthUser)
 }
 
+// AppleLogin exchanges the code for an Apple user and logs them in. The user
+// payload (first/last name, email) is only present on the first authorization.
+func (s *AuthService) AppleLogin(ctx context.Context, code, userParam string) (string, string, error) {
+	exchanged, err := exchangeAppleCode(ctx, code)
+	if err != nil {
+		return "", "", apperror.ErrInternalServer
+	}
+
+	sub, email, err := parseAppleIDToken(exchanged.IDToken)
+	if err != nil {
+		return "", "", apperror.ErrInternalServer
+	}
+
+	payload := parseAppleUserParam(userParam)
+	if payload.Email != "" {
+		email = payload.Email
+	}
+
+	oauthUser := OAuthUser{
+		ProviderID: sub,
+		Provider:   "apple",
+		Email:      email,
+		FirstName:  payload.Name.FirstName,
+		LastName:   payload.Name.LastName,
+	}
+
+	return oauthLogin(ctx, s.DB, s.Keys, s.Issuer, s.AuditService, s.AccessTokenTTL, s.RefreshTokenTTL, oauthUser)
+}
+
 // RefreshToken refreshes the session using refresh token rotation, looking the
 // session up directly by the SHA-256 hash of the presented refresh token.
 func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (string, string, error) {

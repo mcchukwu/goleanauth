@@ -14,7 +14,9 @@ import (
 
 var googleOAuthConfig *oauth2.Config
 
-func InitOAuth(cfg *config.Config) {
+// InitOAuth wires the provider configurations. It fails only if an explicitly
+// configured provider has invalid credentials (e.g. an unparseable Apple key).
+func InitOAuth(cfg *config.Config) error {
 	googleOAuthConfig = &oauth2.Config{
 		ClientID:     cfg.GoogleClientID,
 		ClientSecret: cfg.GoogleClientSecret,
@@ -22,6 +24,7 @@ func InitOAuth(cfg *config.Config) {
 		Scopes:       []string{"openid", "email", "profile"},
 		Endpoint:     google.Endpoint,
 	}
+	return initApple(cfg)
 }
 
 // googleUserInfo mirrors the subset of the Google userinfo endpoint we need.
