@@ -15,6 +15,7 @@ import (
 	"goleanauth/internal/validation"
 	"goleanauth/pkg/config"
 	"goleanauth/pkg/db"
+	"goleanauth/pkg/jwks"
 	"goleanauth/pkg/logger"
 )
 
@@ -29,6 +30,31 @@ func main() {
 	// Initialize shared packages
 	validation.Init()
 	auth.InitOAuth(cfg)
+
+	// Build the signing key set. In development an ephemeral key is generated
+	// when one is not configured (tokens will be invalidated on restart).
+	var keys *jwks.KeySet
+
+	switch {
+	case cfg.JWTPrivateKey != "":
+		var err error
+		keys, err = jwks.Load(cfg.JWTPrivateKey, cfg.JWTPublicKeys)
+		if err != nil {
+			logger.Error("Failed to load jwt signing keys: %s", err)
+			os.Exit(1)
+		}
+	case cfg.AppEnv == "production":
+		logger.Error("JWT_PRIVATE_KEY is required in production")
+		os.Exit(1)
+	default:
+		var err error
+		keys, err = jwks.Generate()
+		if err != nil {
+			logger.Error("Failed to generate jwt signing key")
+			os.Exit(1)
+		}
+		logger.Warn("Generated ephemeral JWT signing key; configure JWT_PRIVATE_KEY to persist tokens across restarts")
+	}
 
 	mux := http.NewServeMux()
 
@@ -46,7 +72,7 @@ func main() {
 	refreshLimiterMiddleware := middleware.NewRateLimiterMiddleware(10, time.Minute, cfg.TrustProxy)
 	oauthLimiterMiddleware := middleware.NewRateLimiterMiddleware(5, time.Minute, cfg.TrustProxy)
 
-	authMiddleware := middleware.NewAuthMiddleware(db.DB, []byte(cfg.JWTSecret))
+	authMiddleware := middleware.NewAuthMiddleware(db.DB, keys)
 
 	requestIDMiddleware := middleware.NewRequestIDMiddleware()
 	loggingMiddleware := middleware.NewLoggingMiddleware()
@@ -56,7 +82,7 @@ func main() {
 
 	// Configure services and handlers
 	auditService := audit.NewAuditService(db.DB)
-	authService := auth.NewAuthService(db.DB, []byte(cfg.JWTSecret), auditService, cfg)
+	authService := auth.NewAuthService(db.DB, keys, auditService, cfg)
 	authHandler := auth.NewAuthHandler(authService, cfg)
 
 	// Protected routes

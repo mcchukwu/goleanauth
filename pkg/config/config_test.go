@@ -7,7 +7,7 @@ func validConfig() *Config {
 		AppEnv:                "development",
 		AppPort:               "8080",
 		DBURL:                 "postgres://user:pass@localhost:5432/db",
-		JWTSecret:             "0123456789012345678901234567890123456789",
+		Issuer:                "http://localhost:8080",
 		AccessTokenTTLMinutes: 15,
 		RefreshTokenTTLHours:  24,
 		CORSAllowedOrigins:    []string{"http://localhost:3000"},
@@ -30,8 +30,11 @@ func TestValidateErrors(t *testing.T) {
 	}{
 		{"invalid env", func(c *Config) { c.AppEnv = "staging" }},
 		{"missing db url", func(c *Config) { c.DBURL = "" }},
-		{"missing jwt secret", func(c *Config) { c.JWTSecret = "" }},
-		{"short jwt secret", func(c *Config) { c.JWTSecret = "short" }},
+		{"missing issuer", func(c *Config) { c.Issuer = "" }},
+		{"production without signing key", func(c *Config) {
+			c.AppEnv = "production"
+			c.JWTPrivateKey = ""
+		}},
 		{"missing cors", func(c *Config) { c.CORSAllowedOrigins = nil }},
 		{"zero access ttl", func(c *Config) { c.AccessTokenTTLMinutes = 0 }},
 		{"zero refresh ttl", func(c *Config) { c.RefreshTokenTTLHours = -1 }},
@@ -54,7 +57,8 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("APP_PORT", "9000")
 	t.Setenv("DB_URL", "postgres://user:pass@localhost:5432/db")
-	t.Setenv("JWT_SECRET", "0123456789012345678901234567890123456789")
+	t.Setenv("ISSUER", "https://auth.example.com")
+	t.Setenv("JWT_PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----")
 	t.Setenv("ACCESS_TOKEN_TTL_MINUTES", "5")
 	t.Setenv("REFRESH_TOKEN_TTL_HOURS", "48")
 	t.Setenv("TRUST_PROXY", "true")
@@ -73,6 +77,8 @@ func TestLoadFromEnv(t *testing.T) {
 		{"AppEnv", cfg.AppEnv, "production"},
 		{"AppPort", cfg.AppPort, "9000"},
 		{"DBURL", cfg.DBURL, "postgres://user:pass@localhost:5432/db"},
+		{"Issuer", cfg.Issuer, "https://auth.example.com"},
+		{"JWTPrivateKey", cfg.JWTPrivateKey, "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"},
 		{"AccessTokenTTLMinutes", cfg.AccessTokenTTLMinutes, 5},
 		{"RefreshTokenTTLHours", cfg.RefreshTokenTTLHours, 48},
 		{"TrustProxy", cfg.TrustProxy, true},
@@ -96,6 +102,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.AppPort != "8080" {
 		t.Errorf("AppPort default = %q, want 8080", cfg.AppPort)
+	}
+	if cfg.Issuer != "http://localhost:8080" {
+		t.Errorf("Issuer default = %q, want http://localhost:8080", cfg.Issuer)
 	}
 	if cfg.TrustProxy {
 		t.Error("TrustProxy default = true, want false")

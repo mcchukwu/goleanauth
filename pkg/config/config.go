@@ -14,7 +14,9 @@ type Config struct {
 	AppEnv                string   `env:"APP_ENV"`
 	AppPort               string   `env:"APP_PORT"`
 	DBURL                 string   `env:"DB_URL"`
-	JWTSecret             string   `env:"JWT_SECRET"`
+	Issuer                string   `env:"ISSUER"`
+	JWTPrivateKey         string   `env:"JWT_PRIVATE_KEY"`
+	JWTPublicKeys         string   `env:"JWT_PUBLIC_KEYS"`
 	AccessTokenTTLMinutes int      `env:"ACCESS_TOKEN_TTL_MINUTES"`
 	RefreshTokenTTLHours  int      `env:"REFRESH_TOKEN_TTL_HOURS"`
 	TrustProxy            bool     `env:"TRUST_PROXY"`
@@ -50,7 +52,9 @@ func Load() *Config {
 		AppEnv:                getEnv("APP_ENV", "development"),
 		AppPort:               getEnv("APP_PORT", "8080"),
 		DBURL:                 getEnv("DB_URL", ""),
-		JWTSecret:             getEnv("JWT_SECRET", ""),
+		Issuer:                getEnv("ISSUER", "http://localhost:8080"),
+		JWTPrivateKey:         getEnv("JWT_PRIVATE_KEY", ""),
+		JWTPublicKeys:         getEnv("JWT_PUBLIC_KEYS", ""),
 		AccessTokenTTLMinutes: accessTokenTTLMinutes,
 		RefreshTokenTTLHours:  refreshTokenTTLHours,
 		TrustProxy:            trustProxy,
@@ -75,12 +79,14 @@ func (c *Config) Validate() error {
 		return errors.New("database url is required")
 	}
 
-	if c.JWTSecret == "" {
-		return errors.New("jwt secret is required")
+	if c.Issuer == "" {
+		return errors.New("issuer is required")
 	}
 
-	if len(c.JWTSecret) < 32 {
-		return errors.New("jwt secret must be at least 32 characters")
+	// A signing key must be explicitly configured in production; development
+	// may fall back to an ephemeral generated key.
+	if c.AppEnv == "production" && c.JWTPrivateKey == "" {
+		return errors.New("jwt private key is required in production")
 	}
 
 	if c.AccessTokenTTLMinutes <= 0 {

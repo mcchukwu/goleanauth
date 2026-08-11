@@ -12,6 +12,7 @@ import (
 	"goleanauth/internal/apperror"
 	"goleanauth/internal/audit"
 	"goleanauth/pkg/config"
+	"goleanauth/pkg/jwks"
 )
 
 func newTestService(t *testing.T) (*AuthService, sqlmock.Sqlmock) {
@@ -23,8 +24,13 @@ func newTestService(t *testing.T) (*AuthService, sqlmock.Sqlmock) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	cfg := &config.Config{AccessTokenTTLMinutes: 15, RefreshTokenTTLHours: 24}
-	return NewAuthService(db, []byte("test-secret-0123456789abcdef"), audit.NewAuditService(db), cfg), mock
+	keys, err := jwks.Generate()
+	if err != nil {
+		t.Fatalf("jwks.Generate() error: %v", err)
+	}
+
+	cfg := &config.Config{AccessTokenTTLMinutes: 15, RefreshTokenTTLHours: 24, Issuer: "http://localhost:8080"}
+	return NewAuthService(db, keys, audit.NewAuditService(db), cfg), mock
 }
 
 const testPassword = "secret123"
@@ -171,7 +177,8 @@ func TestRefreshTokenSuccess(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("FROM sessions").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id"}).AddRow("session-1", "user-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "client_id", "scope"}).
+			AddRow("session-1", "user-1", nil, ""))
 	mock.ExpectExec("UPDATE sessions").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery("INSERT INTO sessions").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("session-2"))
@@ -195,7 +202,7 @@ func TestRefreshTokenInvalid(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("FROM sessions").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "client_id", "scope"}))
 	mock.ExpectRollback()
 
 	_, _, err := s.RefreshToken(context.Background(), "unknown-token")

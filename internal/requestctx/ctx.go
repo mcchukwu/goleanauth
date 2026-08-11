@@ -7,6 +7,8 @@ type contextKey string
 const (
 	UserIDKey    contextKey = "user_id"
 	SessionIDKey contextKey = "session_id"
+	ClientIDKey  contextKey = "client_id"
+	ScopeKey     contextKey = "scope"
 	RequestIDKey contextKey = "request_id"
 )
 

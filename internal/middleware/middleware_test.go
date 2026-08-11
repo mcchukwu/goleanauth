@@ -10,6 +10,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"goleanauth/internal/requestctx"
+	"goleanauth/pkg/jwks"
 )
 
 func TestGetClientIP(t *testing.T) {
@@ -62,6 +63,16 @@ func TestGetClientIP(t *testing.T) {
 	}
 }
 
+func userClaims(userID, sessionID string) jwks.Claims {
+	return jwks.Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+		SessionID: sessionID,
+	}
+}
+
 func TestRequireAuth_MissingHeader(t *testing.T) {
 	db, _, err := sqlmock.New()
 	if err != nil {
@@ -69,7 +80,12 @@ func TestRequireAuth_MissingHeader(t *testing.T) {
 	}
 	defer db.Close()
 
-	m := NewAuthMiddleware(db, []byte("secret"))
+	keys, err := jwks.Generate()
+	if err != nil {
+		t.Fatalf("jwks.Generate() error: %v", err)
+	}
+
+	m := NewAuthMiddleware(db, keys)
 
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	rr := httptest.NewRecorder()
@@ -83,30 +99,27 @@ func TestRequireAuth_MissingHeader(t *testing.T) {
 	}
 }
 
-func TestRequireAuth_ValidToken(t *testing.T) {
-	secret := []byte("test-secret-0123456789abcdef")
+func TestRequireAuth_ValidUserToken(t *testing.T) {
+	keys, err := jwks.Generate()
+	if err != nil {
+		t.Fatalf("jwks.Generate() error: %v", err)
+	}
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock.New() error: %v", err)
 	}
 	defer db.Close()
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, AccessTokenClaims{
-		UserID:    "user-1",
-		SessionID: "session-1",
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-		},
-	})
-	signed, err := token.SignedString(secret)
+	signed, err := keys.Sign(userClaims("user-1", "session-1"))
 	if err != nil {
-		t.Fatalf("SignedString() error: %v", err)
+		t.Fatalf("Sign() error: %v", err)
 	}
 
-	mock.ExpectQuery("SELECT EXISTS").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery("FROM sessions").
+		WillReturnRows(sqlmock.NewRows([]string{"revoked", "expired", "user_id", "client_id", "status", "client_active"}).
+			AddRow(false, false, "user-1", nil, "active", nil))
 
-	m := NewAuthMiddleware(db, secret)
+	m := NewAuthMiddleware(db, keys)
 
 	var called bool
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -137,30 +150,73 @@ func TestRequireAuth_ValidToken(t *testing.T) {
 	}
 }
 
-func TestRequireAuth_SuspendedSession(t *testing.T) {
-	secret := []byte("test-secret-0123456789abcdef")
+func TestRequireAuth_ValidClientToken(t *testing.T) {
+	keys, err := jwks.Generate()
+	if err != nil {
+		t.Fatalf("jwks.Generate() error: %v", err)
+	}
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock.New() error: %v", err)
 	}
 	defer db.Close()
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, AccessTokenClaims{
-		UserID:    "user-1",
-		SessionID: "session-1",
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-		},
-	})
-	signed, err := token.SignedString(secret)
+	claims := userClaims("", "session-1")
+	claims.ClientID = "client-1"
+	claims.Scope = "read write"
+	signed, err := keys.Sign(claims)
 	if err != nil {
-		t.Fatalf("SignedString() error: %v", err)
+		t.Fatalf("Sign() error: %v", err)
 	}
 
-	mock.ExpectQuery("SELECT EXISTS").
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery("FROM sessions").
+		WillReturnRows(sqlmock.NewRows([]string{"revoked", "expired", "user_id", "client_id", "status", "client_active"}).
+			AddRow(false, false, nil, "client-1", nil, true))
 
-	m := NewAuthMiddleware(db, secret)
+	m := NewAuthMiddleware(db, keys)
+
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+signed)
+	rr := httptest.NewRecorder()
+
+	var called bool
+	m.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if cid, ok := requestctx.ClientID(r.Context()); !ok || cid != "client-1" {
+			t.Errorf("ClientID from context = %q, %v; want client-1", cid, ok)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNoContent)
+	}
+	if !called {
+		t.Error("next handler was not called")
+	}
+}
+
+func TestRequireAuth_SuspendedUser(t *testing.T) {
+	keys, err := jwks.Generate()
+	if err != nil {
+		t.Fatalf("jwks.Generate() error: %v", err)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error: %v", err)
+	}
+	defer db.Close()
+
+	signed, err := keys.Sign(userClaims("user-1", "session-1"))
+	if err != nil {
+		t.Fatalf("Sign() error: %v", err)
+	}
+
+	mock.ExpectQuery("FROM sessions").
+		WillReturnRows(sqlmock.NewRows([]string{"revoked", "expired", "user_id", "client_id", "status", "client_active"}).
+			AddRow(false, false, "user-1", nil, "suspended", nil))
+
+	m := NewAuthMiddleware(db, keys)
 
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.Header.Set("Authorization", "Bearer "+signed)
