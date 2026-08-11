@@ -40,11 +40,11 @@ func main() {
 	logger.Info("Connected to database")
 
 	// Configure middleware
-	rateLimiterMiddleware := middleware.NewRateLimiterMiddleware(100, time.Minute)
-	loginLimiterMiddleware := middleware.NewRateLimiterMiddleware(5, time.Minute)
-	registerLimiterMiddleware := middleware.NewRateLimiterMiddleware(3, time.Minute)
-	refreshLimiterMiddleware := middleware.NewRateLimiterMiddleware(10, time.Minute)
-	oauthLimiterMiddleware := middleware.NewRateLimiterMiddleware(5, time.Minute)
+	rateLimiterMiddleware := middleware.NewRateLimiterMiddleware(100, time.Minute, cfg.TrustProxy)
+	loginLimiterMiddleware := middleware.NewRateLimiterMiddleware(5, time.Minute, cfg.TrustProxy)
+	registerLimiterMiddleware := middleware.NewRateLimiterMiddleware(3, time.Minute, cfg.TrustProxy)
+	refreshLimiterMiddleware := middleware.NewRateLimiterMiddleware(10, time.Minute, cfg.TrustProxy)
+	oauthLimiterMiddleware := middleware.NewRateLimiterMiddleware(5, time.Minute, cfg.TrustProxy)
 
 	authMiddleware := middleware.NewAuthMiddleware(db.DB, []byte(cfg.JWTSecret))
 

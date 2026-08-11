@@ -3,6 +3,7 @@ package middleware
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,13 +21,15 @@ type RateLimiterMiddleware struct {
 	clients     map[string]*clientLimiter
 	maxRequests int
 	window      time.Duration
+	trustProxy  bool
 }
 
-func NewRateLimiterMiddleware(maxRequests int, window time.Duration) *RateLimiterMiddleware {
+func NewRateLimiterMiddleware(maxRequests int, window time.Duration, trustProxy bool) *RateLimiterMiddleware {
 	rl := &RateLimiterMiddleware{
 		clients:     make(map[string]*clientLimiter),
 		maxRequests: maxRequests,
 		window:      window,
+		trustProxy:  trustProxy,
 	}
 
 	go rl.cleanup()
@@ -37,7 +40,7 @@ func NewRateLimiterMiddleware(maxRequests int, window time.Duration) *RateLimite
 // Limit limits the number of requests per client
 func (rl *RateLimiterMiddleware) Limit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := getClientIP(r)
+		ip := getClientIP(r, rl.trustProxy)
 
 		rl.mu.Lock()
 
@@ -89,19 +92,23 @@ func (rl *RateLimiterMiddleware) cleanup() {
 	}
 }
 
-// getClientIP returns the client IP address
-func getClientIP(r *http.Request) string {
-	// reverse proxy support
-	forwarded := r.Header.Get(
-		"X-Forwarded-For",
-	)
-	if forwarded != "" {
-		return forwarded
+// getClientIP returns the client IP address. Proxy headers are only trusted
+// when the service runs behind a trusted reverse proxy (TRUST_PROXY=true);
+// otherwise the remote address is used to prevent header spoofing.
+func getClientIP(r *http.Request, trustProxy bool) string {
+	if trustProxy {
+		forwarded := r.Header.Get("X-Forwarded-For")
+		if forwarded != "" {
+			if first := strings.TrimSpace(strings.Split(forwarded, ",")[0]); first != "" {
+				return first
+			}
+		}
+		if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+			return realIP
+		}
 	}
 
-	ip, _, err := net.SplitHostPort(
-		r.RemoteAddr,
-	)
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}

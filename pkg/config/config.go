@@ -17,6 +17,7 @@ type Config struct {
 	JWTSecret             string   `env:"JWT_SECRET"`
 	AccessTokenTTLMinutes int      `env:"ACCESS_TOKEN_TTL_MINUTES"`
 	RefreshTokenTTLHours  int      `env:"REFRESH_TOKEN_TTL_HOURS"`
+	TrustProxy            bool     `env:"TRUST_PROXY"`
 	CORSAllowedOrigins    []string `env:"CORS_ALLOWED_ORIGINS"`
 	GoogleClientID        string   `env:"GOOGLE_CLIENT_ID"`
 	GoogleClientSecret    string   `env:"GOOGLE_CLIENT_SECRET"`
@@ -35,18 +36,24 @@ func Load() *Config {
 		log.Fatal(err)
 	}
 
-	refreshTokenTTLHours, err := strconv.Atoi(getEnv("REFRESH_TOKEN_TTL_HOURS", "24"))
+	refreshTokenTTLHours, err := strconv.Atoi(getEnv("REFRESH_TOKEN_TTL_HOURS", "720"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	trustProxy, err := strconv.ParseBool(getEnv("TRUST_PROXY", "false"))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	return &Config{
-		AppEnv:                getEnv("APP_ENV", ""),
+		AppEnv:                getEnv("APP_ENV", "development"),
 		AppPort:               getEnv("APP_PORT", "8080"),
 		DBURL:                 getEnv("DB_URL", ""),
 		JWTSecret:             getEnv("JWT_SECRET", ""),
 		AccessTokenTTLMinutes: accessTokenTTLMinutes,
 		RefreshTokenTTLHours:  refreshTokenTTLHours,
+		TrustProxy:            trustProxy,
 		CORSAllowedOrigins:    strings.Split(getEnv("CORS_ALLOWED_ORIGINS", ""), ","),
 		GoogleClientID:        getEnv("GOOGLE_CLIENT_ID", ""),
 		GoogleClientSecret:    getEnv("GOOGLE_CLIENT_SECRET", ""),
@@ -74,6 +81,14 @@ func (c *Config) Validate() error {
 
 	if len(c.JWTSecret) < 32 {
 		return errors.New("jwt secret must be at least 32 characters")
+	}
+
+	if c.AccessTokenTTLMinutes <= 0 {
+		return errors.New("access token ttl must be positive")
+	}
+
+	if c.RefreshTokenTTLHours <= 0 {
+		return errors.New("refresh token ttl must be positive")
 	}
 
 	if len(c.CORSAllowedOrigins) == 0 {
