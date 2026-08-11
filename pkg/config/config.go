@@ -127,16 +127,18 @@ func (c *Config) Validate() error {
 		return errors.New("cors allowed origins is required")
 	}
 
-	if c.GoogleClientID == "" {
-		return errors.New("google client id is required")
+	// Google sign-in is optional: when any credential is set, all three are
+	// required so a partially-configured provider fails fast. With no Google
+	// credentials the service runs email/password-only.
+	googleCreds := []string{c.GoogleClientID, c.GoogleClientSecret, c.GoogleRedirectURL}
+	set := 0
+	for _, v := range googleCreds {
+		if v != "" {
+			set++
+		}
 	}
-
-	if c.GoogleClientSecret == "" {
-		return errors.New("google client secret is required")
-	}
-
-	if c.GoogleRedirectURL == "" {
-		return errors.New("google redirect url is required")
+	if set != 0 && set != len(googleCreds) {
+		return errors.New("google client id, secret, and redirect url must all be set together")
 	}
 
 	return nil

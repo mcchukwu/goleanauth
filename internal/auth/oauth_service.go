@@ -135,10 +135,11 @@ func (s *OAuthService) tokenRefresh(ctx context.Context, client Client, refreshT
 
 	err := db.WithTransaction(dbCtx, s.DB, func(tx *sql.Tx) error {
 		var sessionID, scope string
+		var userID sql.NullString
 		hash := hashRefreshToken(refreshToken)
 
 		err := tx.QueryRowContext(dbCtx, `
-			SELECT s.id, s.scope
+			SELECT s.id, s.user_id, s.scope
 			FROM sessions s
 			JOIN clients c ON c.client_id = s.client_id
 			WHERE s.refresh_token_hash = $1
@@ -146,7 +147,7 @@ func (s *OAuthService) tokenRefresh(ctx context.Context, client Client, refreshT
 			  AND s.revoked = false
 			  AND s.expires_at > NOW()
 			  AND c.active = true
-		`, hash, client.ClientID).Scan(&sessionID, &scope)
+		`, hash, client.ClientID).Scan(&sessionID, &userID, &scope)
 		if errors.Is(err, sql.ErrNoRows) {
 			return apperror.ErrInvalidToken
 		}
@@ -165,7 +166,7 @@ func (s *OAuthService) tokenRefresh(ctx context.Context, client Client, refreshT
 		}
 
 		var accessToken, newRefreshToken string
-		_, accessToken, newRefreshToken, err = createSession(dbCtx, tx, "", &client.ClientID, scope, s.Keys, s.Issuer, s.AccessTokenTTL, s.RefreshTokenTTL)
+		_, accessToken, newRefreshToken, err = createSession(dbCtx, tx, userID.String, &client.ClientID, scope, s.Keys, s.Issuer, s.AccessTokenTTL, s.RefreshTokenTTL)
 		if err != nil {
 			return err
 		}
@@ -179,6 +180,7 @@ func (s *OAuthService) tokenRefresh(ctx context.Context, client Client, refreshT
 		}
 
 		return s.AuditService.Log(dbCtx, tx, audit.LogEntry{
+			UserID:     nullableString(userID.String),
 			Action:     "client.token_refreshed",
 			EntityType: "client",
 			EntityID:   &client.ClientID,

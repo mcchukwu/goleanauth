@@ -105,3 +105,19 @@ func TestRefreshToken_NoCookie(t *testing.T) {
 		t.Errorf("error code = %q, want invalid_token", body.Error.Code)
 	}
 }
+
+func TestGoogleLogin_NotConfigured(t *testing.T) {
+	h := newTestHandler()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/google/login", nil)
+	rr := httptest.NewRecorder()
+
+	h.GoogleLoginHandler(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusServiceUnavailable)
+	}
+	if body := decodeError(t, rr); body.Error.Code != "provider_not_configured" {
+		t.Errorf("error code = %q, want provider_not_configured", body.Error.Code)
+	}
+}

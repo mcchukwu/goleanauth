@@ -201,3 +201,72 @@ func TestAuthorizationCodePKCEMismatch(t *testing.T) {
 		t.Fatalf("Token with wrong verifier = %v, want ErrInvalidToken", err)
 	}
 }
+
+// TestAuthorizationCodeRefreshKeepsUser guards the OAuth refresh_token grant:
+// rotating a user session must preserve the user binding so the new access
+// token still carries the subject and userinfo keeps working.
+func TestAuthorizationCodeRefreshKeepsUser(t *testing.T) {
+	oauth, clients, keys := newOAuth(t)
+	svc := newAuthService(t)
+	ctx := context.Background()
+
+	userID, _ := registerAndLogin(t, svc, uniqueEmail())
+
+	clientID, clientSecret, err := clients.RegisterClient(ctx, "Integration Web Refresh", "openid profile email", integrationRedirectURI)
+	if err != nil {
+		t.Fatalf("RegisterClient: %v", err)
+	}
+
+	const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	challenge := s256Challenge(verifier)
+
+	_, scope, err := oauth.ValidateAuthorize(ctx, clientID, integrationRedirectURI, "openid profile email", challenge, "S256")
+	if err != nil {
+		t.Fatalf("ValidateAuthorize: %v", err)
+	}
+	code, err := oauth.IssueAuthorizationCode(ctx, clientID, userID, integrationRedirectURI, scope, challenge, "S256")
+	if err != nil {
+		t.Fatalf("IssueAuthorizationCode: %v", err)
+	}
+
+	ts, err := oauth.Token(ctx, auth.TokenRequest{
+		GrantType:    "authorization_code",
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Code:         code,
+		RedirectURI:  integrationRedirectURI,
+		CodeVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatalf("authorization_code Token: %v", err)
+	}
+
+	// Refresh via the OAuth endpoint must preserve the user subject.
+	refreshed, err := oauth.Token(ctx, auth.TokenRequest{
+		GrantType:    "refresh_token",
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RefreshToken: ts.RefreshToken,
+	})
+	if err != nil {
+		t.Fatalf("refresh_token Token: %v", err)
+	}
+	claims := parseAccess(t, keys, refreshed.AccessToken)
+	if claims.Subject != userID {
+		t.Fatalf("refreshed sub = %q, want %q", claims.Subject, userID)
+	}
+
+	if _, err := oauth.UserInfo(ctx, claims.Subject); err != nil {
+		t.Fatalf("UserInfo after refresh: %v", err)
+	}
+
+	// The original refresh token was rotated away.
+	if _, err := oauth.Token(ctx, auth.TokenRequest{
+		GrantType:    "refresh_token",
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RefreshToken: ts.RefreshToken,
+	}); !errors.Is(err, apperror.ErrInvalidToken) {
+		t.Fatalf("reused refresh token = %v, want ErrInvalidToken", err)
+	}
+}

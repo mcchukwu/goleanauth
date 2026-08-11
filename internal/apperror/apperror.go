@@ -43,6 +43,9 @@ var (
 	// RATE LIMITING
 	ErrRateLimited = errors.New("too many requests")
 
+	// PROVIDERS
+	ErrProviderNotConfigured = errors.New("provider not configured")
+
 	// OAUTH
 	ErrUnsupportedGrantType    = errors.New("unsupported grant type")
 	ErrInvalidRequest          = errors.New("invalid request")

@@ -53,6 +53,24 @@ func TestValidateErrors(t *testing.T) {
 	}
 }
 
+func TestValidateGoogleOptional(t *testing.T) {
+	t.Run("no google credentials is valid", func(t *testing.T) {
+		c := validConfig()
+		c.GoogleClientID, c.GoogleClientSecret, c.GoogleRedirectURL = "", "", ""
+		if err := c.Validate(); err != nil {
+			t.Fatalf("Validate() unexpected error: %v", err)
+		}
+	})
+
+	t.Run("partial google credentials is invalid", func(t *testing.T) {
+		c := validConfig()
+		c.GoogleClientSecret, c.GoogleRedirectURL = "", ""
+		if err := c.Validate(); err == nil {
+			t.Error("Validate() expected error, got nil")
+		}
+	})
+}
+
 func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("APP_PORT", "9000")

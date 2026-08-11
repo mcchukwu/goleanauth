@@ -107,6 +107,10 @@ func HandleError(w http.ResponseWriter, err error) {
 	case errors.Is(err, apperror.ErrRateLimited):
 		Error(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
 
+	// PROVIDERS
+	case errors.Is(err, apperror.ErrProviderNotConfigured):
+		Error(w, http.StatusServiceUnavailable, "provider_not_configured", "provider not configured")
+
 	// SYSTEM
 	case errors.Is(err, apperror.ErrInternalServer):
 		Error(w, http.StatusInternalServerError, "internal_server_error", "internal server error")

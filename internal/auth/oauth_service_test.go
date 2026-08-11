@@ -141,7 +141,7 @@ func TestOAuthTokenRefresh(t *testing.T) {
 	mockClientAuth(mock, "topsecret", "read write")
 	mock.ExpectBegin()
 	mock.ExpectQuery("FROM sessions").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "scope"}).AddRow("session-1", "read"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "scope"}).AddRow("session-1", nil, "read"))
 	mock.ExpectExec("UPDATE sessions").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery("INSERT INTO sessions").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("session-2"))
@@ -167,7 +167,7 @@ func TestOAuthTokenRefreshInvalid(t *testing.T) {
 	mockClientAuth(mock, "topsecret", "read write")
 	mock.ExpectBegin()
 	mock.ExpectQuery("FROM sessions").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "scope"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "scope"}))
 	mock.ExpectRollback()
 
 	_, err := svc.Token(context.Background(), TokenRequest{

@@ -1,5 +1,7 @@
 # GoleanAuth
 
+[![CI](https://github.com/mcchukwu/goleanauth/actions/workflows/ci.yml/badge.svg)](https://github.com/mcchukwu/goleanauth/actions/workflows/ci.yml)
+
 A production-grade authentication and authorization service written in Go.
 GoleanAuth is an OAuth 2.0 / OpenID Connect provider with email/password and
 social sign-in (Google, Apple), refresh-token rotation, session management,
@@ -75,6 +77,28 @@ curl http://localhost:8080/v1/live
 Browse the interactive API reference at http://localhost:8080/docs (ReDoc),
 or fetch the raw spec at http://localhost:8080/docs/openapi.yaml.
 
+### Run with Docker
+
+A multi-stage `Dockerfile` builds a minimal runtime image (binary + CA certs
+for outbound Google/Apple HTTPS calls). Configure it with the same environment
+variables listed below — in production, prefer a reverse proxy in front of it
+for TLS termination:
+
+```sh
+docker build -t goleanauth .
+docker run --rm -p 8080:8080 \
+  -e APP_ENV=development \
+  -e DB_URL='postgres://user:pass@host:5432/db?sslmode=disable' \
+  -e ISSUER='http://localhost:8080' \
+  -e CORS_ALLOWED_ORIGINS='http://localhost:3000' \
+  goleanauth
+```
+
+> **Production deployment:** the repo ships the application image and
+> Postgres, but TLS termination, secrets management, and (for multi-instance
+> deployments) centralized rate limiting are expected to live at the consumer
+> site. The built-in rate limiter is in-memory and per-instance.
+
 ## Configuration
 
 Configuration is read from the environment (and `.env`). The table below
@@ -93,9 +117,9 @@ lists every option; `.env.example` documents each with usage notes.
 | `TRUST_PROXY`            | `false`                      | Trust `X-Forwarded-For`/`X-Real-IP`. **Never enable when exposed directly.** |
 | `SERVE_DOCS`             | on in dev, off in prod       | Serve `/docs` (ReDoc) and `/docs/openapi.yaml`.                    |
 | `CORS_ALLOWED_ORIGINS`   | empty                        | Comma-separated allowed origins.                                   |
-| `GOOGLE_CLIENT_ID`       | — (required)                 | Google OAuth client ID.                                            |
-| `GOOGLE_CLIENT_SECRET`   | — (required)                 | Google OAuth client secret.                                        |
-| `GOOGLE_REDIRECT_URL`    | — (required)                 | Google redirect URI (must match the console configuration).        |
+| `GOOGLE_CLIENT_ID`       | empty                        | Google OAuth client ID. Set all three Google values together to enable Sign in with Google; leave empty for email/password-only. |
+| `GOOGLE_CLIENT_SECRET`   | empty                        | Google OAuth client secret.                                        |
+| `GOOGLE_REDIRECT_URL`    | empty                        | Google redirect URI (must match the console configuration).        |
 | `ADMIN_API_KEY`          | empty                        | Static key for the admin API (`X-Admin-Key`). When unset the admin endpoints return 404. |
 | `APPLE_CLIENT_ID`        | empty                        | Apple service identifier. Empty disables Apple sign-in.            |
 | `APPLE_TEAM_ID`          | empty                        | Apple Developer team ID.                                           |

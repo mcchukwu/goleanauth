@@ -107,6 +107,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 // GoogleLoginHandler handles the Google OAuth login
 func (h *AuthHandler) GoogleLoginHandler(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.GoogleClientID == "" {
+		response.HandleError(w, apperror.ErrProviderNotConfigured)
+		return
+	}
+
 	state, err := generateState()
 	if err != nil {
 		response.HandleError(w, apperror.ErrInternalServer)
@@ -130,6 +135,11 @@ func (h *AuthHandler) GoogleLoginHandler(w http.ResponseWriter, r *http.Request)
 
 // GoogleCallback handles the Google OAuth callback
 func (h *AuthHandler) GoogleCallbackHandler(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.GoogleClientID == "" {
+		response.HandleError(w, apperror.ErrProviderNotConfigured)
+		return
+	}
+
 	state := r.URL.Query().Get("state")
 	code := r.URL.Query().Get("code")
 
