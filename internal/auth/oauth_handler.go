@@ -41,6 +41,7 @@ func (h *OAuthHandler) Token(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: r.FormValue("refresh_token"),
 		Code:         r.FormValue("code"),
 		RedirectURI:  r.FormValue("redirect_uri"),
+		CodeVerifier: r.FormValue("code_verifier"),
 		Scope:        r.FormValue("scope"),
 	})
 	if err != nil {
@@ -116,6 +117,7 @@ func (h *OAuthHandler) Discovery(w http.ResponseWriter, r *http.Request) {
 		"revocation_endpoint":                   h.Service.Issuer + "/v1/oauth/revoke",
 		"response_types_supported":              []string{"code"},
 		"grant_types_supported":                 []string{"client_credentials", "refresh_token", "authorization_code"},
+		"code_challenge_methods_supported":      []string{"S256"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"EdDSA"},
 		"scopes_supported":                      []string{"openid", "profile", "email"},
@@ -185,8 +187,10 @@ func (h *OAuthHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 	redirectURI := q.Get("redirect_uri")
 	requestedScope := q.Get("scope")
 	state := q.Get("state")
+	codeChallenge := q.Get("code_challenge")
+	codeChallengeMethod := q.Get("code_challenge_method")
 
-	client, scope, err := h.Service.ValidateAuthorize(r.Context(), clientID, redirectURI, requestedScope)
+	client, scope, err := h.Service.ValidateAuthorize(r.Context(), clientID, redirectURI, requestedScope, codeChallenge, codeChallengeMethod)
 	if err != nil {
 		h.authorizeError(w, r, err, clientID, redirectURI, state)
 		return
@@ -204,7 +208,7 @@ func (h *OAuthHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.renderConsent(w, client, userID, redirectURI, scope, state)
+	h.renderConsent(w, client, userID, redirectURI, scope, state, codeChallenge, codeChallengeMethod)
 }
 
 // ConsentApprove handles the consent form submission. It re-validates every
@@ -220,8 +224,10 @@ func (h *OAuthHandler) ConsentApprove(w http.ResponseWriter, r *http.Request) {
 	redirectURI := r.FormValue("redirect_uri")
 	requestedScope := r.FormValue("scope")
 	state := r.FormValue("state")
+	codeChallenge := r.FormValue("code_challenge")
+	codeChallengeMethod := r.FormValue("code_challenge_method")
 
-	_, scope, err := h.Service.ValidateAuthorize(r.Context(), clientID, redirectURI, requestedScope)
+	_, scope, err := h.Service.ValidateAuthorize(r.Context(), clientID, redirectURI, requestedScope, codeChallenge, codeChallengeMethod)
 	if err != nil {
 		h.authorizeError(w, r, err, clientID, redirectURI, state)
 		return
@@ -229,7 +235,7 @@ func (h *OAuthHandler) ConsentApprove(w http.ResponseWriter, r *http.Request) {
 
 	userID, ok := h.loggedInUser(r)
 	if !ok {
-		next := "/v1/oauth/authorize?" + url.Values{"client_id": {clientID}, "redirect_uri": {redirectURI}, "scope": {requestedScope}, "state": {state}}.Encode()
+		next := "/v1/oauth/authorize?" + url.Values{"client_id": {clientID}, "redirect_uri": {redirectURI}, "scope": {requestedScope}, "state": {state}, "code_challenge": {codeChallenge}, "code_challenge_method": {codeChallengeMethod}}.Encode()
 		http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusFound)
 		return
 	}
@@ -239,7 +245,7 @@ func (h *OAuthHandler) ConsentApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	code, err := h.Service.IssueAuthorizationCode(r.Context(), clientID, userID, redirectURI, scope)
+	code, err := h.Service.IssueAuthorizationCode(r.Context(), clientID, userID, redirectURI, scope, codeChallenge, codeChallengeMethod)
 	if err != nil {
 		h.authorizeError(w, r, err, clientID, redirectURI, state)
 		return
@@ -337,14 +343,16 @@ func (h *OAuthHandler) redirectOAuthError(w http.ResponseWriter, r *http.Request
 	http.Redirect(w, r, buildAuthorizeRedirect(redirectURI, values), http.StatusFound)
 }
 
-func (h *OAuthHandler) renderConsent(w http.ResponseWriter, client Client, userID, redirectURI, scope, state string) {
+func (h *OAuthHandler) renderConsent(w http.ResponseWriter, client Client, userID, redirectURI, scope, state, codeChallenge, codeChallengeMethod string) {
 	pages.Consent(w, pages.ConsentData{
-		ClientName:  client.Name,
-		ClientID:    client.ClientID,
-		RedirectURI: redirectURI,
-		Scope:       scope,
-		State:       state,
-		Scopes:      pages.ScopeDescriptions(scopeFields(scope)),
+		ClientName:          client.Name,
+		ClientID:            client.ClientID,
+		RedirectURI:         redirectURI,
+		Scope:               scope,
+		State:               state,
+		CodeChallenge:       codeChallenge,
+		CodeChallengeMethod: codeChallengeMethod,
+		Scopes:              pages.ScopeDescriptions(scopeFields(scope)),
 	})
 }
 

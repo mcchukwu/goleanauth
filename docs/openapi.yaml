@@ -5,10 +5,12 @@ info:
   version: 1.0.0
   summary: Production-grade authentication service.
   description: |
-    GoleanAuth is a production-ready authentication service
-    supporting email/password authentication, OAuth providers,
-    JWT access tokens, refresh token rotation, session management,
-    audit logging, and enterprise-ready security.
+    GoleanAuth is a production-ready authentication service supporting
+    email/password registration and login, Sign in with Google and Apple,
+    refresh token rotation, session management, an OAuth 2.0 / OIDC provider
+    surface (authorization code with PKCE, client credentials, introspection,
+    revocation, userinfo, discovery, JWKS), admin client registration, and
+    audit logging.
 
   contact:
     name: Miracle Chukwu
@@ -26,19 +28,582 @@ servers:
 
 tags:
   - name: Authentication
-    description: Email and password authentication.
-
-  - name: OAuth
-    description: OAuth authentication providers.
+    description: Register and sign in with email or phone.
 
   - name: Sessions
     description: Refresh tokens and logout.
 
-  - name: Health
-    description: Health monitoring endpoints.
+  - name: Providers
+    description: Sign in with Google and Apple.
+
+  - name: OAuth
+    description: OAuth 2.0 / OIDC endpoints and the interactive authorize flow.
+
+  - name: Discovery
+    description: OpenID Connect discovery and signing keys.
 
   - name: Admin
     description: Administrative endpoints, gated by the static ADMIN_API_KEY.
+
+  - name: Health
+    description: Health monitoring endpoints.
+
+paths:
+
+  /v1/auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register a new user
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "409":
+          description: Email or phone already registered
+
+  /v1/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Sign in
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            examples:
+              email:
+                value:
+                  identifier: miracle@example.com
+                  password: hellomiracle
+              phone:
+                value:
+                  identifier: "+2348012345678"
+                  password: hellomiracle
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          access_token:
+                            type: string
+                            description: JWT access token (Bearer).
+        "401":
+          description: Invalid credentials
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /v1/auth/refresh:
+    post:
+      tags: [Sessions]
+      summary: Refresh the access token
+      description: |
+        Rotates the refresh token presented in the `refresh_token` HttpOnly
+        cookie and returns a fresh access token.
+      operationId: refreshToken
+      security:
+        - refreshCookie: []
+      responses:
+        "200":
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          access_token:
+                            type: string
+        "401":
+          description: Missing or invalid refresh token
+
+  /v1/auth/logout:
+    post:
+      tags: [Sessions]
+      summary: Log out the current session
+      operationId: logout
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Logged out
+        "401":
+          description: Invalid or missing token
+
+  /v1/auth/logout-all:
+    post:
+      tags: [Sessions]
+      summary: Sign out every device
+      operationId: logoutAll
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: All sessions revoked
+
+  /v1/auth/google/login:
+    get:
+      tags: [Providers]
+      summary: Start Sign in with Google
+      operationId: googleLogin
+      responses:
+        "307":
+          description: Redirect to Google
+        "500":
+          description: Google not configured
+
+  /v1/auth/google/callback:
+    get:
+      tags: [Providers]
+      summary: Complete Sign in with Google
+      operationId: googleCallback
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Login successful (access token in body; refresh cookie set)
+        "401":
+          description: State mismatch
+
+  /v1/auth/apple/login:
+    get:
+      tags: [Providers]
+      summary: Start Sign in with Apple
+      operationId: appleLogin
+      responses:
+        "307":
+          description: Redirect to Apple
+        "500":
+          description: Apple not configured
+
+  /v1/auth/apple/callback:
+    get:
+      tags: [Providers]
+      summary: Complete Sign in with Apple
+      operationId: appleCallback
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: user
+          in: query
+          required: false
+          schema:
+            type: string
+            description: JSON user payload, present on the first authorization only.
+      responses:
+        "200":
+          description: Login successful
+        "401":
+          description: State mismatch
+
+  /login:
+    get:
+      tags: [OAuth]
+      summary: Interactive login form
+      description: HTML page used by the authorize flow. Rendered when the browser has no valid session.
+      operationId: loginForm
+      parameters:
+        - name: next
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: HTML login form
+    post:
+      tags: [OAuth]
+      summary: Submit the interactive login form
+      operationId: loginSubmit
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                identifier:
+                  type: string
+                password:
+                  type: string
+                next:
+                  type: string
+              required: [identifier, password]
+      responses:
+        "302":
+          description: Redirect back to the authorize flow (refreshed cookie set)
+        "200":
+          description: Re-rendered form with an error
+
+  /v1/oauth/authorize:
+    get:
+      tags: [OAuth]
+      summary: Authorize a client on behalf of the user
+      description: |
+        Interactive OAuth 2.0 authorization endpoint. Validates the request,
+        then shows the consent page (or redirects to /login when the browser
+        has no session). Supports PKCE (RFC 7636) via code_challenge.
+      operationId: authorize
+      parameters:
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code]
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [S256]
+      responses:
+        "200":
+          description: Consent page HTML
+        "307":
+          description: Redirect to /login when unauthenticated
+
+  /v1/oauth/approve:
+    post:
+      tags: [OAuth]
+      summary: Submit the consent decision
+      description: |
+        Approve or deny an authorization request. On approval a single-use
+        authorization code is issued and the browser is redirected to the
+        client's redirect_uri with `code` and `state`.
+      operationId: consentApprove
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                client_id:
+                  type: string
+                redirect_uri:
+                  type: string
+                scope:
+                  type: string
+                state:
+                  type: string
+                code_challenge:
+                  type: string
+                code_challenge_method:
+                  type: string
+                decision:
+                  type: string
+                  enum: [approve, deny]
+              required: [client_id, redirect_uri, decision]
+      responses:
+        "302":
+          description: Redirect to redirect_uri (code or access_denied)
+        "200":
+          description: Error page for invalid requests
+
+  /v1/oauth/token:
+    post:
+      tags: [OAuth]
+      summary: Exchange a grant for tokens
+      description: |
+        Issues access and refresh tokens for the client_credentials,
+        authorization_code (with optional PKCE verification), and
+        refresh_token grants. Clients authenticate with HTTP Basic or form
+        client_id/client_secret.
+      operationId: token
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                grant_type:
+                  type: string
+                  enum: [client_credentials, authorization_code, refresh_token]
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                code:
+                  type: string
+                redirect_uri:
+                  type: string
+                code_verifier:
+                  type: string
+                refresh_token:
+                  type: string
+                scope:
+                  type: string
+              required: [grant_type]
+      responses:
+        "200":
+          description: Token set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: invalid_request, invalid_grant, invalid_scope, or unsupported_grant_type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenError"
+        "401":
+          description: invalid_client
+
+  /v1/oauth/revoke:
+    post:
+      tags: [OAuth]
+      summary: Revoke a refresh token
+      description: RFC 7009 revocation. Always returns 200 once the client is authenticated.
+      operationId: revoke
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                token:
+                  type: string
+              required: [token]
+      responses:
+        "200":
+          description: Token revoked
+
+  /v1/oauth/introspect:
+    post:
+      tags: [OAuth]
+      summary: Introspect a token
+      description: RFC 7662 introspection for access and refresh tokens.
+      operationId: introspect
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                token:
+                  type: string
+              required: [token]
+      responses:
+        "200":
+          description: Token state and claims
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntrospectionResponse"
+
+  /v1/userinfo:
+    get:
+      tags: [OAuth]
+      summary: Standard user claims
+      description: OpenID Connect userinfo for the authenticated principal.
+      operationId: userinfo
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User claims
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserInfo"
+        "401":
+          description: Invalid token
+
+  /v1/admin/clients:
+    post:
+      tags: [Admin]
+      summary: Register a new OAuth client
+      description: |
+        Creates a registered client. Requires the static admin API key
+        (ADMIN_API_KEY) in the X-Admin-Key header. The client secret is
+        returned only once.
+      operationId: createClient
+      security:
+        - adminKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterClientRequest"
+      responses:
+        "201":
+          description: Client registered
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          client_id:
+                            type: string
+                          client_secret:
+                            type: string
+                            description: Shown only once.
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: Admin API not configured (ADMIN_API_KEY unset)
+    get:
+      tags: [Admin]
+      summary: List registered clients
+      operationId: listClients
+      security:
+        - adminKey: []
+      responses:
+        "200":
+          description: Clients fetched
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ClientListItem"
+        "404":
+          description: Admin API not configured (ADMIN_API_KEY unset)
+
+  /.well-known/openid-configuration:
+    get:
+      tags: [Discovery]
+      summary: OpenID Connect discovery document
+      operationId: discovery
+      responses:
+        "200":
+          description: Discovery document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveryDocument"
+
+  /.well-known/jwks.json:
+    get:
+      tags: [Discovery]
+      summary: JSON Web Key Set
+      operationId: jwks
+      responses:
+        "200":
+          description: Public signing keys
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JWKS"
+
+  /v1/health:
+    get:
+      tags: [Health]
+      summary: Health status
+      operationId: health
+      responses:
+        "200":
+          $ref: "#/components/responses/Health"
+
+  /v1/ready:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      operationId: ready
+      responses:
+        "200":
+          description: Ready to serve traffic
+
+  /v1/live:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      operationId: live
+      responses:
+        "200":
+          description: Process is alive
 
 components:
 
@@ -59,133 +624,262 @@ components:
       in: cookie
       name: refresh_token
 
-components:
-
   responses:
 
-    Unauthorized:
-      description: Authentication required.
-
-    Forbidden:
-      description: Access denied.
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ValidationErrorResponse"
 
     TooManyRequests:
-      description: Rate limit exceeded.
+      description: Rate limit exceeded
 
-    InternalServerError:
-      description: Internal server error.
-
-components:
+    Health:
+      description: Health status
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/HealthResponse"
 
   schemas:
 
     RegisterRequest:
-
       type: object
-
       properties:
-
         email:
           type: string
           format: email
           example: miracle@example.com
-
         phone:
           type: string
           example: "+2348012345678"
-
         first_name:
           type: string
-          example: Miracle
-
         last_name:
           type: string
-          example: Chukwu
-
         password:
           type: string
           format: password
+      description: At least one of email or phone is required.
 
-      required:
-        - password
-
-SuccessResponse:
-
-  type: object
-
-  properties:
-
-    success:
-      type: boolean
-      example: true
-
-    message:
-      type: string
-
-    data:
-      nullable: true
-
-ErrorResponse:
-
-  type: object
-
-  properties:
-
-    success:
-      type: boolean
-      example: false
-
-    error:
-
+    LoginRequest:
       type: object
-
       properties:
-
-        code:
+        identifier:
           type: string
-
-        message:
+          description: Email address or phone number.
+        password:
           type: string
+          format: password
+      required: [identifier, password]
 
-ValidationErrorResponse:
-
-  type: object
-
-  properties:
-
-    success:
-      type: boolean
-
-    error:
-
+    RegisterClientRequest:
       type: object
-
       properties:
-
-        code:
+        name:
           type: string
-
-        message:
+          maxLength: 100
+        scope:
           type: string
+          description: Space-separated scopes the client may request.
+        redirect_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+      required: [name]
 
-        fields:
-
-          type: object
-
-          additionalProperties:
+    ClientListItem:
+      type: object
+      properties:
+        client_id:
+          type: string
+        name:
+          type: string
+        scope:
+          type: string
+        active:
+          type: boolean
+        redirect_uris:
+          type: array
+          items:
             type: string
 
-HealthResponse:
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+        refresh_token:
+          type: string
+        scope:
+          type: string
 
-  type: object
+    TokenError:
+      type: object
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, invalid_client, invalid_grant, invalid_scope, unsupported_grant_type]
+        error_description:
+          type: string
 
-  properties:
+    IntrospectionResponse:
+      type: object
+      properties:
+        active:
+          type: boolean
+        sub:
+          type: string
+        session_id:
+          type: string
+        client_id:
+          type: string
+        scope:
+          type: string
+        iss:
+          type: string
+        aud:
+          type: array
+          items:
+            type: string
+        exp:
+          type: integer
+        iat:
+          type: integer
 
-    status:
-      type: string
+    UserInfo:
+      type: object
+      properties:
+        sub:
+          type: string
+        email:
+          type: string
+        email_verified:
+          type: boolean
+        given_name:
+          type: string
+        family_name:
+          type: string
+        name:
+          type: string
 
-    database:
-      type: string
+    DiscoveryDocument:
+      type: object
+      properties:
+        issuer:
+          type: string
+        jwks_uri:
+          type: string
+        authorization_endpoint:
+          type: string
+        token_endpoint:
+          type: string
+        userinfo_endpoint:
+          type: string
+        introspection_endpoint:
+          type: string
+        revocation_endpoint:
+          type: string
+        response_types_supported:
+          type: array
+          items:
+            type: string
+        grant_types_supported:
+          type: array
+          items:
+            type: string
+        code_challenge_methods_supported:
+          type: array
+          items:
+            type: string
+        subject_types_supported:
+          type: array
+          items:
+            type: string
+        scopes_supported:
+          type: array
+          items:
+            type: string
 
-    uptime:
-      type: string
+    JWKS:
+      type: object
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            properties:
+              kty:
+                type: string
+              kid:
+                type: string
+              crv:
+                type: string
+              x:
+                type: string
+              y:
+                type: string
+              alg:
+                type: string
+              use:
+                type: string
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+        data:
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            fields:
+              type: object
+              additionalProperties:
+                type: string
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        database:
+          type: string
+        uptime:
+          type: string

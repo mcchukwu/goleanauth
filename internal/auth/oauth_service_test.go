@@ -202,7 +202,7 @@ func TestOAuthIssueAuthorizationCode(t *testing.T) {
 	svc, mock := newTestOAuth(t)
 	mock.ExpectExec("INSERT INTO authorization_codes").WillReturnResult(sqlmock.NewResult(1, 1))
 
-	code, err := svc.IssueAuthorizationCode(context.Background(), "client-1", "user-1", "http://app.test/cb", "read")
+	code, err := svc.IssueAuthorizationCode(context.Background(), "client-1", "user-1", "http://app.test/cb", "read", "", "")
 	if err != nil {
 		t.Fatalf("IssueAuthorizationCode() unexpected error: %v", err)
 	}
@@ -216,8 +216,8 @@ func TestOAuthTokenAuthorizationCode(t *testing.T) {
 	mockClientAuth(mock, "topsecret", "read write")
 	mock.ExpectBegin()
 	mock.ExpectQuery("FROM authorization_codes").
-		WillReturnRows(sqlmock.NewRows([]string{"user_id", "redirect_uri", "scope"}).
-			AddRow("user-1", "http://app.test/cb", "read"))
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "redirect_uri", "scope", "code_challenge", "code_challenge_method"}).
+			AddRow("user-1", "http://app.test/cb", "read", "", ""))
 	mock.ExpectExec("UPDATE authorization_codes").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery("INSERT INTO sessions").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("session-1"))
@@ -242,12 +242,91 @@ func TestOAuthTokenAuthorizationCode(t *testing.T) {
 	}
 }
 
+func TestOAuthTokenAuthorizationCodePKCE(t *testing.T) {
+	svc, mock := newTestOAuth(t)
+	const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+	mockClientAuth(mock, "topsecret", "read write")
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM authorization_codes").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "redirect_uri", "scope", "code_challenge", "code_challenge_method"}).
+			AddRow("user-1", "http://app.test/cb", "read", challenge, "S256"))
+	mock.ExpectExec("UPDATE authorization_codes").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("INSERT INTO sessions").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("session-1"))
+	mock.ExpectExec("INSERT INTO audit_logs").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	tokens, err := svc.Token(context.Background(), TokenRequest{
+		GrantType:    "authorization_code",
+		ClientID:     "client-1",
+		ClientSecret: "topsecret",
+		Code:         "some-auth-code",
+		RedirectURI:  "http://app.test/cb",
+		CodeVerifier: verifier,
+	})
+	if err != nil {
+		t.Fatalf("Token() unexpected error: %v", err)
+	}
+	if tokens.AccessToken == "" {
+		t.Error("Token() returned empty access token")
+	}
+}
+
+func TestOAuthTokenAuthorizationCodeWrongVerifier(t *testing.T) {
+	svc, mock := newTestOAuth(t)
+	const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+	mockClientAuth(mock, "topsecret", "read write")
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM authorization_codes").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "redirect_uri", "scope", "code_challenge", "code_challenge_method"}).
+			AddRow("user-1", "http://app.test/cb", "read", challenge, "S256"))
+	mock.ExpectRollback()
+
+	_, err := svc.Token(context.Background(), TokenRequest{
+		GrantType:    "authorization_code",
+		ClientID:     "client-1",
+		ClientSecret: "topsecret",
+		Code:         "some-auth-code",
+		RedirectURI:  "http://app.test/cb",
+		CodeVerifier: "this-is-the-wrong-verifier-value-with-enough-length",
+	})
+	if !errors.Is(err, apperror.ErrInvalidToken) {
+		t.Fatalf("Token() error = %v, want %v", err, apperror.ErrInvalidToken)
+	}
+}
+
+func TestOAuthTokenAuthorizationCodeMissingVerifier(t *testing.T) {
+	svc, mock := newTestOAuth(t)
+	const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+	mockClientAuth(mock, "topsecret", "read write")
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM authorization_codes").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "redirect_uri", "scope", "code_challenge", "code_challenge_method"}).
+			AddRow("user-1", "http://app.test/cb", "read", challenge, "S256"))
+	mock.ExpectRollback()
+
+	_, err := svc.Token(context.Background(), TokenRequest{
+		GrantType:    "authorization_code",
+		ClientID:     "client-1",
+		ClientSecret: "topsecret",
+		Code:         "some-auth-code",
+		RedirectURI:  "http://app.test/cb",
+	})
+	if !errors.Is(err, apperror.ErrInvalidToken) {
+		t.Fatalf("Token() error = %v, want %v", err, apperror.ErrInvalidToken)
+	}
+}
+
 func TestOAuthTokenAuthorizationCodeReplay(t *testing.T) {
 	svc, mock := newTestOAuth(t)
 	mockClientAuth(mock, "topsecret", "read write")
 	mock.ExpectBegin()
 	mock.ExpectQuery("FROM authorization_codes").
-		WillReturnRows(sqlmock.NewRows([]string{"user_id", "redirect_uri", "scope"}))
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "redirect_uri", "scope", "code_challenge", "code_challenge_method"}))
 	mock.ExpectRollback()
 
 	_, err := svc.Token(context.Background(), TokenRequest{
@@ -267,8 +346,8 @@ func TestOAuthTokenAuthorizationCodeRedirectMismatch(t *testing.T) {
 	mockClientAuth(mock, "topsecret", "read write")
 	mock.ExpectBegin()
 	mock.ExpectQuery("FROM authorization_codes").
-		WillReturnRows(sqlmock.NewRows([]string{"user_id", "redirect_uri", "scope"}).
-			AddRow("user-1", "http://app.test/cb", "read"))
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "redirect_uri", "scope", "code_challenge", "code_challenge_method"}).
+			AddRow("user-1", "http://app.test/cb", "read", "", ""))
 	mock.ExpectRollback()
 
 	_, err := svc.Token(context.Background(), TokenRequest{
@@ -287,7 +366,7 @@ func TestOAuthValidateAuthorize(t *testing.T) {
 	svc, mock := newTestOAuth(t)
 	mockClientGet(mock, "read write", `{"http://app.test/cb"}`)
 
-	client, scope, err := svc.ValidateAuthorize(context.Background(), "client-1", "http://app.test/cb", "read")
+	client, scope, err := svc.ValidateAuthorize(context.Background(), "client-1", "http://app.test/cb", "read", "", "")
 	if err != nil {
 		t.Fatalf("ValidateAuthorize() unexpected error: %v", err)
 	}
@@ -303,7 +382,7 @@ func TestOAuthValidateAuthorizeUnregisteredRedirect(t *testing.T) {
 	svc, mock := newTestOAuth(t)
 	mockClientGet(mock, "read write", `{"http://app.test/cb"}`)
 
-	_, _, err := svc.ValidateAuthorize(context.Background(), "client-1", "http://evil.test/cb", "read")
+	_, _, err := svc.ValidateAuthorize(context.Background(), "client-1", "http://evil.test/cb", "read", "", "")
 	if !errors.Is(err, apperror.ErrInvalidRedirectURI) {
 		t.Fatalf("ValidateAuthorize() error = %v, want %v", err, apperror.ErrInvalidRedirectURI)
 	}
@@ -313,9 +392,50 @@ func TestOAuthValidateAuthorizeScopeDenied(t *testing.T) {
 	svc, mock := newTestOAuth(t)
 	mockClientGet(mock, "read write", `{"http://app.test/cb"}`)
 
-	_, _, err := svc.ValidateAuthorize(context.Background(), "client-1", "http://app.test/cb", "admin")
+	_, _, err := svc.ValidateAuthorize(context.Background(), "client-1", "http://app.test/cb", "admin", "", "")
 	if !errors.Is(err, apperror.ErrInvalidScope) {
 		t.Fatalf("ValidateAuthorize() error = %v, want %v", err, apperror.ErrInvalidScope)
+	}
+}
+
+func TestOAuthValidateAuthorizePKCEUnsupportedMethod(t *testing.T) {
+	svc, _ := newTestOAuth(t)
+	const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+	_, _, err := svc.ValidateAuthorize(context.Background(), "client-1", "http://app.test/cb", "read", challenge, "plain")
+	if !errors.Is(err, apperror.ErrInvalidRequest) {
+		t.Fatalf("ValidateAuthorize() error = %v, want %v", err, apperror.ErrInvalidRequest)
+	}
+}
+
+func TestOAuthValidateAuthorizePKCEMalformedChallenge(t *testing.T) {
+	svc, _ := newTestOAuth(t)
+
+	_, _, err := svc.ValidateAuthorize(context.Background(), "client-1", "http://app.test/cb", "read", "short", "S256")
+	if !errors.Is(err, apperror.ErrInvalidRequest) {
+		t.Fatalf("ValidateAuthorize() error = %v, want %v", err, apperror.ErrInvalidRequest)
+	}
+}
+
+func TestOAuthValidateAuthorizePKCEValid(t *testing.T) {
+	svc, mock := newTestOAuth(t)
+	mockClientGet(mock, "read write", `{"http://app.test/cb"}`)
+	const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+
+	_, scope, err := svc.ValidateAuthorize(context.Background(), "client-1", "http://app.test/cb", "read", challenge, "S256")
+	if err != nil {
+		t.Fatalf("ValidateAuthorize() unexpected error: %v", err)
+	}
+	if scope != "read" {
+		t.Errorf("scope = %q, want read", scope)
+	}
+}
+
+func TestS256Challenge(t *testing.T) {
+	const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	const want = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+	if got := s256Challenge(verifier); got != want {
+		t.Errorf("s256Challenge() = %q, want %q", got, want)
 	}
 }
 

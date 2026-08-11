@@ -215,6 +215,56 @@ func TestOAuthAuthorizeRedirectsToLogin(t *testing.T) {
 	}
 }
 
+func TestOAuthAuthorizeRendersConsentWithPKCE(t *testing.T) {
+	h, mock := newTestOAuthHandler(t)
+	mockClientGet(mock, "read write", `{"http://app.test/cb"}`)
+	mockLoggedInSession(mock, "user-1")
+
+	const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+	req := httptest.NewRequest(http.MethodGet,
+		"/v1/oauth/authorize?response_type=code&client_id=client-1&redirect_uri=http%3A%2F%2Fapp.test%2Fcb&scope=read&code_challenge="+challenge+"&code_challenge_method=S256&state=xyz", nil)
+	req.AddCookie(&http.Cookie{Name: "refresh_token", Value: "some-refresh-token"})
+
+	rr := httptest.NewRecorder()
+	h.Authorize(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), challenge) {
+		t.Error("consent page missing code challenge")
+	}
+}
+
+func TestOAuthConsentApproveWithPKCE(t *testing.T) {
+	h, mock := newTestOAuthHandler(t)
+	mockClientGet(mock, "read write", `{"http://app.test/cb"}`)
+	mockLoggedInSession(mock, "user-1")
+	mock.ExpectExec("INSERT INTO authorization_codes").WillReturnResult(sqlmock.NewResult(1, 1))
+
+	const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+	req := tokenFormRequest(t, map[string]string{
+		"client_id":             "client-1",
+		"redirect_uri":          "http://app.test/cb",
+		"scope":                 "read",
+		"state":                 "xyz",
+		"code_challenge":        challenge,
+		"code_challenge_method": "S256",
+		"decision":              "approve",
+	})
+	req.AddCookie(&http.Cookie{Name: "refresh_token", Value: "some-refresh-token"})
+
+	rr := httptest.NewRecorder()
+	h.ConsentApprove(rr, req)
+
+	if rr.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302; body=%s", rr.Code, rr.Body.String())
+	}
+	if loc := rr.Header().Get("Location"); !strings.Contains(loc, "code=") || !strings.Contains(loc, "state=xyz") {
+		t.Errorf("Location = %q, missing code or state", loc)
+	}
+}
+
 func TestOAuthAuthorizeUnregisteredRedirectShowsErrorPage(t *testing.T) {
 	h, mock := newTestOAuthHandler(t)
 	mockClientGet(mock, "read write", `{"http://app.test/cb"}`)

@@ -22,12 +22,14 @@ type LoginData struct {
 
 // ConsentData is the OAuth consent screen.
 type ConsentData struct {
-	ClientName  string
-	ClientID    string
-	RedirectURI string
-	Scope       string
-	State       string
-	Scopes      []ScopeDetail
+	ClientName          string
+	ClientID            string
+	RedirectURI         string
+	Scope               string
+	State               string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	Scopes              []ScopeDetail
 }
 
 // ScopeDetail describes a scope for display on the consent screen.

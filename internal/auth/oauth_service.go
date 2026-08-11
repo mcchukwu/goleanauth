@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"strings"
@@ -49,6 +51,7 @@ type TokenRequest struct {
 	RefreshToken string
 	Code         string
 	RedirectURI  string
+	CodeVerifier string
 	Scope        string
 }
 
@@ -74,7 +77,7 @@ func (s *OAuthService) Token(ctx context.Context, req TokenRequest) (TokenSet, e
 	case "refresh_token":
 		return s.tokenRefresh(ctx, client, req.RefreshToken)
 	case "authorization_code":
-		return s.tokenAuthorizationCode(ctx, client, req.Code, req.RedirectURI)
+		return s.tokenAuthorizationCode(ctx, client, req.Code, req.RedirectURI, req.CodeVerifier)
 	default:
 		return TokenSet{}, apperror.ErrUnsupportedGrantType
 	}
@@ -190,9 +193,9 @@ func (s *OAuthService) tokenRefresh(ctx context.Context, client Client, refreshT
 }
 
 // tokenAuthorizationCode exchanges an authorization code for tokens. Codes are
-// single-use and bound to the client, user, redirect URI, and scope recorded at
-// issuance time.
-func (s *OAuthService) tokenAuthorizationCode(ctx context.Context, client Client, code, redirectURI string) (TokenSet, error) {
+// single-use and bound to the client, user, redirect URI, scope, and (when
+// present) PKCE challenge recorded at issuance time.
+func (s *OAuthService) tokenAuthorizationCode(ctx context.Context, client Client, code, redirectURI, codeVerifier string) (TokenSet, error) {
 	if code == "" || redirectURI == "" {
 		return TokenSet{}, apperror.ErrInvalidRequest
 	}
@@ -204,9 +207,10 @@ func (s *OAuthService) tokenAuthorizationCode(ctx context.Context, client Client
 
 	err := db.WithTransaction(dbCtx, s.DB, func(tx *sql.Tx) error {
 		var userID, codeRedirectURI, scope string
+		var codeChallenge, codeChallengeMethod sql.NullString
 
 		err := tx.QueryRowContext(dbCtx, `
-			SELECT ac.user_id, ac.redirect_uri, ac.scope
+			SELECT ac.user_id, ac.redirect_uri, ac.scope, ac.code_challenge, ac.code_challenge_method
 			FROM authorization_codes ac
 			JOIN users u ON u.id = ac.user_id
 			WHERE ac.code_hash = $1
@@ -214,7 +218,7 @@ func (s *OAuthService) tokenAuthorizationCode(ctx context.Context, client Client
 			  AND ac.used = false
 			  AND ac.expires_at > NOW()
 			  AND u.status = 'active'
-		`, hashAuthorizationCode(code), client.ClientID).Scan(&userID, &codeRedirectURI, &scope)
+		`, hashAuthorizationCode(code), client.ClientID).Scan(&userID, &codeRedirectURI, &scope, &codeChallenge, &codeChallengeMethod)
 		if errors.Is(err, sql.ErrNoRows) {
 			return apperror.ErrInvalidToken
 		}
@@ -224,6 +228,17 @@ func (s *OAuthService) tokenAuthorizationCode(ctx context.Context, client Client
 
 		if codeRedirectURI != redirectURI {
 			return apperror.ErrInvalidToken
+		}
+
+		// PKCE verification (RFC 7636). Completed when the code was issued
+		// with a challenge.
+		if codeChallenge.Valid && codeChallenge.String != "" {
+			if codeChallengeMethod.String != "S256" || codeVerifier == "" {
+				return apperror.ErrInvalidToken
+			}
+			if subtle.ConstantTimeCompare([]byte(s256Challenge(codeVerifier)), []byte(codeChallenge.String)) != 1 {
+				return apperror.ErrInvalidToken
+			}
 		}
 
 		// Single-use: mark consumed before issuing tokens so a replayed code
@@ -272,7 +287,11 @@ const authorizationCodeTTL = 10 * time.Minute
 // ValidateAuthorize validates an authorization request against the registered
 // client and returns the client and the granted scope. The caller renders a
 // consent page or an error from the result.
-func (s *OAuthService) ValidateAuthorize(ctx context.Context, clientID, redirectURI, requestedScope string) (Client, string, error) {
+func (s *OAuthService) ValidateAuthorize(ctx context.Context, clientID, redirectURI, requestedScope, codeChallenge, codeChallengeMethod string) (Client, string, error) {
+	if err := validateCodeChallenge(codeChallenge, codeChallengeMethod); err != nil {
+		return Client{}, "", err
+	}
+
 	client, err := s.Clients.Get(ctx, clientID)
 	if errors.Is(err, apperror.ErrClientNotFound) {
 		return Client{}, "", apperror.ErrInvalidClientCredentials
@@ -296,6 +315,36 @@ func (s *OAuthService) ValidateAuthorize(ctx context.Context, clientID, redirect
 	return client, scope, nil
 }
 
+// validateCodeChallenge enforces RFC 7636 S256 challenges. An absent
+// challenge is allowed; when present, the method must be S256 and the value a
+// URL-safe base64 string of 43–128 characters.
+func validateCodeChallenge(challenge, method string) error {
+	if challenge == "" {
+		return nil
+	}
+	if method != "S256" {
+		return apperror.ErrInvalidRequest
+	}
+	if len(challenge) < 43 || len(challenge) > 128 {
+		return apperror.ErrInvalidRequest
+	}
+	for _, r := range challenge {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-' || r == '_':
+		default:
+			return apperror.ErrInvalidRequest
+		}
+	}
+	return nil
+}
+
+// s256Challenge derives the PKCE S256 code challenge for a verifier.
+func s256Challenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
 // redirectURIRegistered reports whether the presented redirect URI exactly
 // matches one of the client's registered redirect URIs.
 func (s *OAuthService) redirectURIRegistered(registered []string, redirectURI string) bool {
@@ -308,8 +357,9 @@ func (s *OAuthService) redirectURIRegistered(registered []string, redirectURI st
 }
 
 // IssueAuthorizationCode creates a single-use, short-lived authorization code
-// bound to the client, user, redirect URI, and granted scope.
-func (s *OAuthService) IssueAuthorizationCode(ctx context.Context, clientID, userID, redirectURI, scope string) (string, error) {
+// bound to the client, user, redirect URI, and granted scope. A PKCE S256
+// challenge is recorded when supplied.
+func (s *OAuthService) IssueAuthorizationCode(ctx context.Context, clientID, userID, redirectURI, scope, codeChallenge, codeChallengeMethod string) (string, error) {
 	codeBytes := make([]byte, 32)
 	if _, err := rand.Read(codeBytes); err != nil {
 		return "", apperror.ErrInternalServer
@@ -320,9 +370,9 @@ func (s *OAuthService) IssueAuthorizationCode(ctx context.Context, clientID, use
 	defer cancel()
 
 	_, err := s.DB.ExecContext(dbCtx, `
-		INSERT INTO authorization_codes (code_hash, client_id, user_id, redirect_uri, scope, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, hashAuthorizationCode(code), clientID, userID, redirectURI, scope, time.Now().Add(authorizationCodeTTL))
+		INSERT INTO authorization_codes (code_hash, client_id, user_id, redirect_uri, scope, code_challenge, code_challenge_method, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, hashAuthorizationCode(code), clientID, userID, redirectURI, scope, nullableString(codeChallenge), nullableString(codeChallengeMethod), time.Now().Add(authorizationCodeTTL))
 	if err != nil {
 		return "", apperror.ErrDatabase
 	}
