@@ -14,14 +14,16 @@ import (
 	"golang.org/x/oauth2"
 )
 
-var cfg = config.Load()
-
 type AuthHandler struct {
 	AuthService *AuthService
+	cfg         *config.Config
 }
 
-func NewAuthHandler(authService *AuthService) *AuthHandler {
-	return &AuthHandler{AuthService: authService}
+func NewAuthHandler(authService *AuthService, cfg *config.Config) *AuthHandler {
+	return &AuthHandler{
+		AuthService: authService,
+		cfg:         cfg,
+	}
 }
 
 // Register creates a new user account
@@ -91,10 +93,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Name:     "refresh_token",
 		Value:    refreshToken,
 		HttpOnly: true,
-		Secure:   cfg.AppEnv == "production", // true in production HTTPS
+		Secure:   h.cfg.AppEnv == "production", // true in production HTTPS
 		Path:     "/",
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   60 * 60 * 24 * 30,
+		MaxAge:   h.cfg.RefreshTokenTTLHours * 3600,
 	})
 
 	// Return response
@@ -115,7 +117,7 @@ func (h *AuthHandler) GoogleLoginHandler(w http.ResponseWriter, r *http.Request)
 		Name:     "oauth_state",
 		Value:    state,
 		HttpOnly: true,
-		Secure:   cfg.AppEnv == "production",
+		Secure:   h.cfg.AppEnv == "production",
 		Path:     "/",
 		MaxAge:   300,
 		SameSite: http.SameSiteLaxMode,
@@ -153,10 +155,10 @@ func (h *AuthHandler) GoogleCallbackHandler(w http.ResponseWriter, r *http.Reque
 		Name:     "refresh_token",
 		Value:    refreshToken,
 		HttpOnly: true,
-		Secure:   cfg.AppEnv == "production",
+		Secure:   h.cfg.AppEnv == "production",
 		Path:     "/",
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   60 * 60 * 24 * 30,
+		MaxAge:   h.cfg.RefreshTokenTTLHours * 3600,
 	})
 
 	response.Success(w, http.StatusOK, "login successful", map[string]any{
@@ -184,10 +186,10 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		Name:     "refresh_token",
 		Value:    newRefreshToken,
 		HttpOnly: true,
-		Secure:   cfg.AppEnv == "production", // true in production HTTPS
+		Secure:   h.cfg.AppEnv == "production", // true in production HTTPS
 		Path:     "/",
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   60 * 60 * 24 * 30,
+		MaxAge:   h.cfg.RefreshTokenTTLHours * 3600,
 	})
 
 	// Return new access token
@@ -217,7 +219,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   cfg.AppEnv == "production", // true in production HTTPS
+		Secure:   h.cfg.AppEnv == "production", // true in production HTTPS
 		MaxAge:   -1,
 	})
 
@@ -246,7 +248,7 @@ func (h *AuthHandler) LogoutAllDevices(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   cfg.AppEnv == "production",
+		Secure:   h.cfg.AppEnv == "production",
 		MaxAge:   -1,
 	})
 

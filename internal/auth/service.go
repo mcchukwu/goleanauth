@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -16,19 +17,26 @@ import (
 
 	"goleanauth/internal/apperror"
 	"goleanauth/internal/audit"
+	"goleanauth/pkg/config"
 	"goleanauth/pkg/db"
 )
 
 type AuthService struct {
-	DB           *sql.DB
-	JWTSecret    []byte
-	AuditService *audit.AuditService
+	DB              *sql.DB
+	JWTSecret       []byte
+	AuditService    *audit.AuditService
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
 }
 
-func NewAuthService(db *sql.DB, secret []byte) *AuthService {
+func NewAuthService(db *sql.DB, secret []byte, auditService *audit.AuditService, cfg *config.Config) *AuthService {
 	return &AuthService{
-		DB:        db,
-		JWTSecret: secret}
+		DB:              db,
+		JWTSecret:       secret,
+		AuditService:    auditService,
+		AccessTokenTTL:  time.Duration(cfg.AccessTokenTTLMinutes) * time.Minute,
+		RefreshTokenTTL: time.Duration(cfg.RefreshTokenTTLHours) * time.Hour,
+	}
 }
 
 // Register creates a new user account
@@ -140,7 +148,7 @@ func (s *AuthService) Login(ctx context.Context, req LoginRequest) (string, stri
 		}
 
 		// Create session
-		accessToken, refreshToken, err = createSession(dbCtx, tx, userID, s.JWTSecret)
+		_, accessToken, refreshToken, err = createSession(dbCtx, tx, userID, s.JWTSecret, s.AccessTokenTTL, s.RefreshTokenTTL)
 		if err != nil {
 			return err
 		}
@@ -174,10 +182,11 @@ func (s *AuthService) GoogleLogin(ctx context.Context, code string) (string, str
 		return "", "", apperror.ErrInternalServer
 	}
 
-	return oauthLogin(ctx, s.DB, s.JWTSecret, s.AuditService, oauthUser)
+	return oauthLogin(ctx, s.DB, s.JWTSecret, s.AuditService, s.AccessTokenTTL, s.RefreshTokenTTL, oauthUser)
 }
 
-// RefreshToken refreshes the session
+// RefreshToken refreshes the session using refresh token rotation, looking the
+// session up directly by the SHA-256 hash of the presented refresh token.
 func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (string, string, error) {
 	var newAccessToken string
 	var newRefreshToken string
@@ -186,99 +195,43 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (st
 	defer cancel()
 
 	err := db.WithTransaction(dbCtx, s.DB, func(tx *sql.Tx) error {
-		// Find session
-		rows, err := tx.QueryContext(dbCtx, `
-			SELECT id, refresh_token_hash, user_id
-			FROM sessions
-			WHERE revoked = false
-		`)
-		if err != nil {
-			return apperror.ErrDatabase
-		}
-
-		if rows.Err() != nil {
-			return apperror.ErrDatabase
-		}
-
-		// Loop through sessions and find refresh token
-		defer rows.Close()
+		// Find the session by the hashed refresh token (unique indexed lookup)
+		sessionHash := hashRefreshToken(refreshToken)
 
 		var sessionID string
-		var hashedRefreshToken string
 		var userID string
-		var found bool
 
-		for rows.Next() {
-			err = rows.Scan(&sessionID, &hashedRefreshToken, &userID)
-			if err != nil {
-				return apperror.ErrInternalServer
-			}
-
-			err = bcrypt.CompareHashAndPassword([]byte(hashedRefreshToken), []byte(refreshToken))
-			if err == nil {
-				found = true
-				break
-			}
-		}
-
-		if !found {
+		err := tx.QueryRowContext(dbCtx, `
+			SELECT s.id, s.user_id
+			FROM sessions s
+			JOIN users u ON u.id = s.user_id
+			WHERE s.refresh_token_hash = $1
+			  AND s.revoked = false
+			  AND s.expires_at > NOW()
+			  AND u.status = 'active'
+		`, sessionHash).Scan(&sessionID, &userID)
+		if errors.Is(err, sql.ErrNoRows) {
 			return apperror.ErrInvalidToken
 		}
+		if err != nil {
+			return apperror.ErrDatabase
+		}
 
-		// Revoke old session
+		// Revoke old session (rotation)
 		_, err = tx.ExecContext(dbCtx, `
-		UPDATE sessions
-		SET revoked = true,
-	    revoked_at = NOW()
-		WHERE id = $1
-	`,
-			sessionID)
+			UPDATE sessions
+			SET revoked = true,
+			    revoked_at = NOW()
+			WHERE id = $1
+		`, sessionID)
 		if err != nil {
 			return apperror.ErrDatabase
 		}
 
-		// Create new refresh token
-		refreshBytes := make([]byte, 32)
-
-		_, err = rand.Read(refreshBytes)
+		// Create new session and issue fresh tokens
+		_, newAccessToken, newRefreshToken, err = createSession(dbCtx, tx, userID, s.JWTSecret, s.AccessTokenTTL, s.RefreshTokenTTL)
 		if err != nil {
-			return apperror.ErrInternalServer
-		}
-
-		newRefreshToken = hex.EncodeToString(refreshBytes)
-
-		// Hash new refresh token
-		newRefreshTokenHash, err := hashRefreshToken(newRefreshToken)
-		if err != nil {
-			return apperror.ErrInternalServer
-		}
-
-		// Create new session
-		var newSessionID string
-		err = tx.QueryRowContext(dbCtx, `
-		INSERT INTO sessions (user_id, refresh_token_hash, expires_at)
-		VALUES ($1, $2, $3)
-		RETURNING id
-`,
-			userID,
-			newRefreshTokenHash,
-			time.Now().Add(30*24*time.Hour),
-		).Scan(&newSessionID)
-		if err != nil {
-			return apperror.ErrDatabase
-		}
-
-		// Issue new JWT access token
-		newToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"user_id":    userID,
-			"session_id": newSessionID,
-			"exp":        time.Now().Add(15 * time.Minute).Unix(),
-		})
-
-		// Sign access token
-		newAccessToken, err = newToken.SignedString(s.JWTSecret)
-		if err != nil {
-			return apperror.ErrInternalServer
+			return err
 		}
 
 		// Audit Log
@@ -308,16 +261,18 @@ func (s *AuthService) Logout(ctx context.Context, sessionID string) error {
 	defer cancel()
 
 	err := db.WithTransaction(dbCtx, s.DB, func(tx *sql.Tx) error {
-		// Revoke session
+		// Revoke session and capture the owner for the audit trail
 		var userID string
-		_, err := tx.ExecContext(dbCtx, `
-		UPDATE sessions
-		SET revoked = true,
-	    revoked_at = NOW()
-		WHERE id = $1
-		RETURNING user_id
-	`,
-			sessionID)
+		err := tx.QueryRowContext(dbCtx, `
+			UPDATE sessions
+			SET revoked = true,
+			    revoked_at = NOW()
+			WHERE id = $1
+			RETURNING user_id
+		`, sessionID).Scan(&userID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return apperror.ErrInvalidToken
+		}
 		if err != nil {
 			return apperror.ErrDatabase
 		}
@@ -389,10 +344,14 @@ func hashPassword(pw string) (string, error) {
 	return string(bytes), err
 }
 
-// hashRefreshToken hashes the refresh token using bcrypt
-func hashRefreshToken(rt string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(rt), 12)
-	return string(bytes), err
+// hashRefreshToken hashes the refresh token using SHA-256.
+//
+// Refresh tokens are high-entropy random values, so a fast, deterministic hash
+// is sufficient and enables direct indexed lookup (bcrypt is only needed for
+// low-entropy secrets like passwords).
+func hashRefreshToken(rt string) string {
+	sum := sha256.Sum256([]byte(rt))
+	return hex.EncodeToString(sum[:])
 }
 
 // createUniqueUsername generates a unique username for the user
@@ -437,7 +396,7 @@ func nullableString(s string) *string {
 }
 
 // oauthLogin is the shared core — provider-agnostic
-func oauthLogin(ctx context.Context, conn *sql.DB, jwtSecret []byte, auditService *audit.AuditService, ou OAuthUser) (string, string, error) {
+func oauthLogin(ctx context.Context, conn *sql.DB, jwtSecret []byte, auditService *audit.AuditService, accessTTL, refreshTTL time.Duration, ou OAuthUser) (string, string, error) {
 	dbCtx, cancel := db.WithDBTimeout(ctx)
 	defer cancel()
 
@@ -496,7 +455,7 @@ func oauthLogin(ctx context.Context, conn *sql.DB, jwtSecret []byte, auditServic
 		}
 
 		var sessionErr error
-		accessToken, refreshToken, sessionErr = createSession(dbCtx, tx, userID, jwtSecret)
+		_, accessToken, refreshToken, sessionErr = createSession(dbCtx, tx, userID, jwtSecret, accessTTL, refreshTTL)
 		if sessionErr != nil {
 			return sessionErr
 		}
@@ -522,44 +481,40 @@ func oauthLogin(ctx context.Context, conn *sql.DB, jwtSecret []byte, auditServic
 	return accessToken, refreshToken, nil
 }
 
-// createSession is shared — Login and OAuth both call this
-func createSession(ctx context.Context, tx *sql.Tx, userID string, jwtSecret []byte) (accessToken, refreshToken string, err error) {
+// createSession is shared — Login and OAuth both call this. It persists a new
+// session row and returns its ID along with fresh access and refresh tokens.
+func createSession(ctx context.Context, tx *sql.Tx, userID string, jwtSecret []byte, accessTTL, refreshTTL time.Duration) (sessionID, accessToken, refreshToken string, err error) {
 	refreshTokenBytes := make([]byte, 32)
 
 	if _, err = rand.Read(refreshTokenBytes); err != nil {
-		return "", "", apperror.ErrInternalServer
+		return "", "", "", apperror.ErrInternalServer
 	}
 
 	refreshToken = hex.EncodeToString(refreshTokenBytes)
+	hashedRefreshToken := hashRefreshToken(refreshToken)
 
-	hashedRefreshToken, err := bcrypt.GenerateFromPassword([]byte(refreshToken), bcrypt.DefaultCost)
-	if err != nil {
-		return "", "", apperror.ErrInternalServer
-	}
-
-	var sessionID string
 	err = tx.QueryRowContext(ctx, `
         INSERT INTO sessions (user_id, refresh_token_hash, expires_at, revoked, created_at)
         VALUES ($1, $2, $3, false, NOW())
         RETURNING id
     `,
 		userID,
-		string(hashedRefreshToken),
-		time.Now().Add(30*24*time.Hour),
+		hashedRefreshToken,
+		time.Now().Add(refreshTTL),
 	).Scan(&sessionID)
 	if err != nil {
-		return "", "", apperror.ErrDatabase
+		return "", "", "", apperror.ErrDatabase
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id":    userID,
 		"session_id": sessionID,
-		"exp":        time.Now().Add(15 * time.Minute).Unix(),
+		"exp":        time.Now().Add(accessTTL).Unix(),
 	})
 	accessToken, err = token.SignedString(jwtSecret)
 	if err != nil {
-		return "", "", apperror.ErrInternalServer
+		return "", "", "", apperror.ErrInternalServer
 	}
 
-	return accessToken, refreshToken, nil
+	return sessionID, accessToken, refreshToken, nil
 }

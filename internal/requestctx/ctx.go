@@ -22,4 +22,3 @@ func get(ctx context.Context, key contextKey) (any, bool) {
 
 	return val, true
 }
-

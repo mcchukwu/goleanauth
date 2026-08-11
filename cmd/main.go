@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"goleanauth/internal/audit"
 	"goleanauth/internal/auth"
 	"goleanauth/internal/health"
 	"goleanauth/internal/middleware"
@@ -54,8 +55,9 @@ func main() {
 	recoveryMiddleware := middleware.NewRecoveryMiddleware()
 
 	// Configure services and handlers
-	authService := auth.NewAuthService(db.DB, []byte(cfg.JWTSecret))
-	authHandler := auth.NewAuthHandler(authService)
+	auditService := audit.NewAuditService(db.DB)
+	authService := auth.NewAuthService(db.DB, []byte(cfg.JWTSecret), auditService, cfg)
+	authHandler := auth.NewAuthHandler(authService, cfg)
 
 	// Protected routes
 	mux.Handle("POST /v1/auth/refresh", authMiddleware.RequireAuth(refreshLimiterMiddleware.Limit(http.HandlerFunc(authHandler.RefreshToken))))

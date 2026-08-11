@@ -24,6 +24,14 @@ func InitOAuth(cfg *config.Config) {
 	}
 }
 
+// googleUserInfo mirrors the subset of the Google userinfo endpoint we need.
+type googleUserInfo struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	FirstName string `json:"given_name"`
+	LastName  string `json:"family_name"`
+}
+
 // exchangeGoogleCode exchanges the google code for a token and returns the user info
 func exchangeGoogleCode(ctx context.Context, code string) (OAuthUser, error) {
 	token, err := googleOAuthConfig.Exchange(ctx, code)
@@ -45,15 +53,16 @@ func exchangeGoogleCode(ctx context.Context, code string) (OAuthUser, error) {
 		return OAuthUser{}, fmt.Errorf("google userinfo read: %w", err)
 	}
 
-	if err = json.Unmarshal(body, &googleUserInfo); err != nil {
+	var info googleUserInfo
+	if err = json.Unmarshal(body, &info); err != nil {
 		return OAuthUser{}, fmt.Errorf("google userinfo parse: %w", err)
 	}
 
 	return OAuthUser{
-		ProviderID: googleUserInfo.ID,
+		ProviderID: info.ID,
 		Provider:   "google",
-		Email:      googleUserInfo.Email,
-		FirstName:  googleUserInfo.FirstName,
-		LastName:   googleUserInfo.LastName,
+		Email:      info.Email,
+		FirstName:  info.FirstName,
+		LastName:   info.LastName,
 	}, nil
 }
