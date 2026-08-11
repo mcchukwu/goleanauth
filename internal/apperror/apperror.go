@@ -43,6 +43,11 @@ var (
 	// RATE LIMITING
 	ErrRateLimited = errors.New("too many requests")
 
+	// OAUTH
+	ErrUnsupportedGrantType = errors.New("unsupported grant type")
+	ErrInvalidRequest       = errors.New("invalid request")
+	ErrInvalidScope         = errors.New("invalid scope")
+
 	// SYSTEM
 	ErrInternalServer = errors.New("internal server error")
 	ErrDatabase       = errors.New("database error")

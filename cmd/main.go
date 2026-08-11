@@ -84,6 +84,9 @@ func main() {
 	auditService := audit.NewAuditService(db.DB)
 	authService := auth.NewAuthService(db.DB, keys, auditService, cfg)
 	authHandler := auth.NewAuthHandler(authService, cfg)
+	clientService := auth.NewClientService(db.DB)
+	oauthService := auth.NewOAuthService(db.DB, keys, clientService, auditService, cfg)
+	oauthHandler := auth.NewOAuthHandler(oauthService, cfg)
 
 	// Protected routes
 	mux.Handle("POST /v1/auth/refresh", authMiddleware.RequireAuth(refreshLimiterMiddleware.Limit(http.HandlerFunc(authHandler.RefreshToken))))
@@ -97,6 +100,16 @@ func main() {
 	// Oauth routes — Google and Apple follow the same callback pattern
 	mux.Handle("GET /v1/auth/google/login", oauthLimiterMiddleware.Limit(http.HandlerFunc(authHandler.GoogleLoginHandler)))
 	mux.Handle("GET /v1/auth/google/callback", oauthLimiterMiddleware.Limit(http.HandlerFunc(authHandler.GoogleCallbackHandler)))
+
+	// OAuth 2.0 / OIDC endpoints for registered clients
+	mux.Handle("POST /v1/oauth/token", oauthLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.Token)))
+	mux.Handle("POST /v1/oauth/revoke", oauthLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.Revoke)))
+	mux.Handle("POST /v1/oauth/introspect", oauthLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.Introspect)))
+	mux.Handle("GET /v1/userinfo", authMiddleware.RequireAuth(http.HandlerFunc(oauthHandler.UserInfo)))
+
+	// Well-known discovery
+	mux.HandleFunc("GET /.well-known/openid-configuration", oauthHandler.Discovery)
+	mux.HandleFunc("GET /.well-known/jwks.json", oauthHandler.JWKS)
 
 	// Health check route (for load balancers)
 	healthHandler := health.NewHealthHandler(db.DB)
