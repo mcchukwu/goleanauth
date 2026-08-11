@@ -209,7 +209,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (st
 			SELECT s.id, s.user_id, s.client_id, s.scope
 			FROM sessions s
 			LEFT JOIN users u ON u.id = s.user_id
-			LEFT JOIN clients c ON c.id = s.client_id
+			LEFT JOIN clients c ON c.client_id = s.client_id
 			WHERE s.refresh_token_hash = $1
 			  AND s.revoked = false
 			  AND s.expires_at > NOW()
@@ -513,7 +513,7 @@ func createSession(ctx context.Context, tx *sql.Tx, userID string, clientID *str
     `,
 		nullableString(userID),
 		clientID,
-		nullableString(scope),
+		scope,
 		hashedRefreshToken,
 		time.Now().Add(refreshTTL),
 	).Scan(&sessionID)

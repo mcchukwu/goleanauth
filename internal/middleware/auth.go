@@ -60,7 +60,7 @@ func (m *AuthMiddleware) RequireAuth(next http.Handler) http.Handler {
 			SELECT s.revoked, s.expires_at < NOW(), s.user_id, s.client_id, u.status, c.active
 			FROM sessions s
 			LEFT JOIN users u ON u.id = s.user_id
-			LEFT JOIN clients c ON c.id = s.client_id
+			LEFT JOIN clients c ON c.client_id = s.client_id
 			WHERE s.id = $1
 		`, claims.SessionID).Scan(&revoked, &expired, &userID, &clientID, &userStatus, &clientActive)
 		if err != nil {

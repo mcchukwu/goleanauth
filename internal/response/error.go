@@ -77,6 +77,16 @@ func HandleError(w http.ResponseWriter, err error) {
 	case errors.Is(err, apperror.ErrInvalidRequestBody):
 		Error(w, http.StatusBadRequest, "invalid_request_body", "invalid request body")
 
+		// CLIENTS
+	case errors.Is(err, apperror.ErrInvalidClientCredentials):
+		Error(w, http.StatusUnauthorized, "invalid_client", "invalid client credentials")
+	case errors.Is(err, apperror.ErrClientInactive):
+		Error(w, http.StatusForbidden, "client_inactive", "client is inactive")
+	case errors.Is(err, apperror.ErrClientNotFound):
+		Error(w, http.StatusNotFound, "client_not_found", "client not found")
+	case errors.Is(err, apperror.ErrClientAlreadyExists):
+		Error(w, http.StatusConflict, "client_already_exists", "client already exists")
+
 		// USERS
 	case errors.Is(err, apperror.ErrUserNotFound):
 		Error(w, http.StatusConflict, "user_not_found", "user not found")

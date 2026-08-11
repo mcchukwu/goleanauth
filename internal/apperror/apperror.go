@@ -18,6 +18,12 @@ var (
 	ErrForbidden               = errors.New("forbidden")
 	ErrInsufficientPermissions = errors.New("insufficient permissions")
 
+	// CLIENTS
+	ErrInvalidClientCredentials = errors.New("invalid client credentials")
+	ErrClientNotFound           = errors.New("client not found")
+	ErrClientInactive           = errors.New("client inactive")
+	ErrClientAlreadyExists      = errors.New("client already exists")
+
 	// USERS
 	ErrUserNotFound       = errors.New("user not found")
 	ErrEmailAlreadyExists = errors.New("email already exists")

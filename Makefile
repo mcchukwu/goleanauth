@@ -2,7 +2,7 @@ APP_NAME := goleanauth
 CMD_PATH := ./cmd
 BIN_PATH := bin
 
-.PHONY: run build clean test
+.PHONY: run build clean test migrate-up migrate-down migrate-status
 
 run: 
 	go run $(CMD_PATH)
@@ -15,4 +15,13 @@ clean:
 
 test:
 	go test ./...
+
+migrate-up:
+	go run ./cmd/migrate up
+
+migrate-down:
+	go run ./cmd/migrate down 1
+
+migrate-status:
+	go run ./cmd/migrate status
 	
