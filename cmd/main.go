@@ -10,6 +10,7 @@ import (
 
 	"goleanauth/internal/audit"
 	"goleanauth/internal/auth"
+	"goleanauth/internal/docs"
 	"goleanauth/internal/health"
 	"goleanauth/internal/middleware"
 	"goleanauth/internal/validation"
@@ -92,6 +93,7 @@ func main() {
 	oauthService := auth.NewOAuthService(db.DB, keys, clientService, auditService, cfg)
 	oauthHandler := auth.NewOAuthHandler(oauthService, authService, cfg)
 	adminHandler := auth.NewAdminHandler(clientService, cfg)
+	docsHandler := docs.NewHandler(cfg.ServeDocs)
 
 	// Protected routes
 	mux.Handle("POST /v1/auth/refresh", authMiddleware.RequireAuth(refreshLimiterMiddleware.Limit(http.HandlerFunc(authHandler.RefreshToken))))
@@ -127,6 +129,11 @@ func main() {
 	// Well-known discovery
 	mux.HandleFunc("GET /.well-known/openid-configuration", oauthHandler.Discovery)
 	mux.HandleFunc("GET /.well-known/jwks.json", oauthHandler.JWKS)
+
+	// API documentation (disabled unless SERVE_DOCS is enabled)
+	mux.Handle("GET /docs", http.HandlerFunc(docsHandler.Index))
+	mux.Handle("GET /docs/openapi.yaml", http.HandlerFunc(docsHandler.Spec))
+	mux.Handle("GET /docs/redoc.standalone.js", http.HandlerFunc(docsHandler.ReDocJS))
 
 	// Health check route (for load balancers)
 	healthHandler := health.NewHealthHandler(db.DB)

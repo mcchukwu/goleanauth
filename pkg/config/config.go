@@ -20,6 +20,7 @@ type Config struct {
 	AccessTokenTTLMinutes int      `env:"ACCESS_TOKEN_TTL_MINUTES"`
 	RefreshTokenTTLHours  int      `env:"REFRESH_TOKEN_TTL_HOURS"`
 	TrustProxy            bool     `env:"TRUST_PROXY"`
+	ServeDocs             bool     `env:"SERVE_DOCS"`
 	CORSAllowedOrigins    []string `env:"CORS_ALLOWED_ORIGINS"`
 	GoogleClientID        string   `env:"GOOGLE_CLIENT_ID"`
 	GoogleClientSecret    string   `env:"GOOGLE_CLIENT_SECRET"`
@@ -54,8 +55,20 @@ func Load() *Config {
 		log.Fatal(err)
 	}
 
+	appEnv := getEnv("APP_ENV", "development")
+
+	// Documentation endpoints default on in development and off in
+	// production; an explicit SERVE_DOCS value always wins.
+	serveDocs := appEnv == "development"
+	if v := getEnv("SERVE_DOCS", ""); v != "" {
+		serveDocs, err = strconv.ParseBool(v)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	return &Config{
-		AppEnv:                getEnv("APP_ENV", "development"),
+		AppEnv:                appEnv,
 		AppPort:               getEnv("APP_PORT", "8080"),
 		DBURL:                 getEnv("DB_URL", ""),
 		Issuer:                getEnv("ISSUER", "http://localhost:8080"),
@@ -64,6 +77,7 @@ func Load() *Config {
 		AccessTokenTTLMinutes: accessTokenTTLMinutes,
 		RefreshTokenTTLHours:  refreshTokenTTLHours,
 		TrustProxy:            trustProxy,
+		ServeDocs:             serveDocs,
 		CORSAllowedOrigins:    strings.Split(getEnv("CORS_ALLOWED_ORIGINS", ""), ","),
 		GoogleClientID:        getEnv("GOOGLE_CLIENT_ID", ""),
 		GoogleClientSecret:    getEnv("GOOGLE_CLIENT_SECRET", ""),
