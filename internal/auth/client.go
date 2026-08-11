@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -110,6 +111,12 @@ func NewClientService(db *sql.DB) *ClientService {
 // RegisterClient creates a new client. The plain-text client secret is
 // returned only once and is never stored; only its hash is persisted.
 func (s *ClientService) RegisterClient(ctx context.Context, name, scope string, redirectURIs ...string) (clientID, clientSecret string, err error) {
+	for _, uri := range redirectURIs {
+		if !isAbsoluteURI(uri) {
+			return "", "", apperror.ErrInvalidRedirectURI
+		}
+	}
+
 	clientIDBytes := make([]byte, 16)
 	if _, err = rand.Read(clientIDBytes); err != nil {
 		return "", "", apperror.ErrInternalServer
@@ -197,6 +204,54 @@ func (s *ClientService) Get(ctx context.Context, clientID string) (Client, error
 	c.RedirectURIs = redirectURIs
 
 	return c, nil
+}
+
+// ClientListItem is a client as returned by the admin listing, without any
+// secret material.
+type ClientListItem struct {
+	ClientID     string   `json:"client_id"`
+	Name         string   `json:"name"`
+	Scope        string   `json:"scope"`
+	Active       bool     `json:"active"`
+	RedirectURIs []string `json:"redirect_uris"`
+}
+
+// ListClients returns all registered clients ordered by creation time.
+func (s *ClientService) ListClients(ctx context.Context) ([]ClientListItem, error) {
+	dbCtx, cancel := db.WithDBTimeout(ctx)
+	defer cancel()
+
+	rows, err := s.DB.QueryContext(dbCtx, `
+		SELECT client_id, name, scope, active, redirect_uris
+		FROM clients
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, apperror.ErrDatabase
+	}
+	defer rows.Close()
+
+	var out []ClientListItem
+	for rows.Next() {
+		var item ClientListItem
+		var uris StringArray
+		if err := rows.Scan(&item.ClientID, &item.Name, &item.Scope, &item.Active, &uris); err != nil {
+			return nil, apperror.ErrDatabase
+		}
+		item.RedirectURIs = uris
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, apperror.ErrDatabase
+	}
+
+	return out, nil
+}
+
+// isAbsoluteURI reports whether the value is an absolute http(s) URL.
+func isAbsoluteURI(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // hashClientSecret hashes a client secret with SHA-256 for storage and

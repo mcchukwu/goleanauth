@@ -86,6 +86,8 @@ func HandleError(w http.ResponseWriter, err error) {
 		Error(w, http.StatusNotFound, "client_not_found", "client not found")
 	case errors.Is(err, apperror.ErrClientAlreadyExists):
 		Error(w, http.StatusConflict, "client_already_exists", "client already exists")
+	case errors.Is(err, apperror.ErrInvalidRedirectURI):
+		Error(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect URI must be an absolute http(s) URL")
 
 		// USERS
 	case errors.Is(err, apperror.ErrUserNotFound):

@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -17,6 +18,22 @@ func registerCustomValidations() {
 	Validate.RegisterValidation("phone", validatePhone)
 	Validate.RegisterValidation("identifier", validateIdentifier)
 	Validate.RegisterValidation("ngidentifier", validateNGIdentifier)
+	Validate.RegisterValidation("absolute_uri", validateAbsoluteURI)
+}
+
+// validateAbsoluteURI validates an absolute http(s) URI with a host. Used for
+// OAuth client redirect URIs.
+func validateAbsoluteURI(fl validator.FieldLevel) bool {
+	val := strings.TrimSpace(fl.Field().String())
+	if val == "" {
+		return true
+	}
+
+	u, err := url.Parse(val)
+	if err != nil {
+		return false
+	}
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // validateNGPhone validates a Nigerian E.164 phone number.

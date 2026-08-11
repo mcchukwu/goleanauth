@@ -24,6 +24,7 @@ type Config struct {
 	GoogleClientID        string   `env:"GOOGLE_CLIENT_ID"`
 	GoogleClientSecret    string   `env:"GOOGLE_CLIENT_SECRET"`
 	GoogleRedirectURL     string   `env:"GOOGLE_REDIRECT_URL"`
+	AdminAPIKey           string   `env:"ADMIN_API_KEY"`
 }
 
 // Load() loads the config from the environment and returns a Config struct
@@ -62,6 +63,7 @@ func Load() *Config {
 		GoogleClientID:        getEnv("GOOGLE_CLIENT_ID", ""),
 		GoogleClientSecret:    getEnv("GOOGLE_CLIENT_SECRET", ""),
 		GoogleRedirectURL:     getEnv("GOOGLE_REDIRECT_URL", ""),
+		AdminAPIKey:           getEnv("ADMIN_API_KEY", ""),
 	}
 }
 

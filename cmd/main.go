@@ -60,6 +60,7 @@ func main() {
 
 	// Connect to database
 	if err := db.Connect(cfg.DBURL); err != nil {
+		logger.Error(err.Error())
 		logger.Error("Failed to connect to database")
 		os.Exit(1)
 	}
@@ -87,6 +88,7 @@ func main() {
 	clientService := auth.NewClientService(db.DB)
 	oauthService := auth.NewOAuthService(db.DB, keys, clientService, auditService, cfg)
 	oauthHandler := auth.NewOAuthHandler(oauthService, authService, cfg)
+	adminHandler := auth.NewAdminHandler(clientService, cfg)
 
 	// Protected routes
 	mux.Handle("POST /v1/auth/refresh", authMiddleware.RequireAuth(refreshLimiterMiddleware.Limit(http.HandlerFunc(authHandler.RefreshToken))))
@@ -112,6 +114,10 @@ func main() {
 	mux.Handle("POST /v1/oauth/approve", oauthLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.ConsentApprove)))
 	mux.Handle("GET /login", loginLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.LoginForm)))
 	mux.Handle("POST /login", loginLimiterMiddleware.Limit(http.HandlerFunc(oauthHandler.LoginSubmit)))
+
+	// Admin: client registration, gated by ADMIN_API_KEY
+	mux.Handle("POST /v1/admin/clients", oauthLimiterMiddleware.Limit(http.HandlerFunc(adminHandler.CreateClient)))
+	mux.Handle("GET /v1/admin/clients", oauthLimiterMiddleware.Limit(http.HandlerFunc(adminHandler.ListClients)))
 
 	// Well-known discovery
 	mux.HandleFunc("GET /.well-known/openid-configuration", oauthHandler.Discovery)

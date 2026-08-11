@@ -43,6 +43,8 @@ func mapValidationMessage(e validator.FieldError) string {
 		return "must be a valid Nigerian phone number or email"
 	case "identifier":
 		return "must be a valid phone number or email"
+	case "absolute_uri":
+		return "must be an absolute http(s) URL"
 	default:
 		return "invalid value"
 	}

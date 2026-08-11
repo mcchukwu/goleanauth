@@ -37,6 +37,9 @@ tags:
   - name: Health
     description: Health monitoring endpoints.
 
+  - name: Admin
+    description: Administrative endpoints, gated by the static ADMIN_API_KEY.
+
 components:
 
   securitySchemes:
@@ -45,6 +48,11 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+
+    adminKey:
+      type: apiKey
+      in: header
+      name: X-Admin-Key
 
     refreshCookie:
       type: apiKey

@@ -134,6 +134,42 @@ func TestStringArrayEmpty(t *testing.T) {
 	}
 }
 
+func TestRegisterClientRejectsBadRedirectURI(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, _, err = NewClientService(db).RegisterClient(context.Background(), "My App", "read", "not-a-url")
+	if !errors.Is(err, apperror.ErrInvalidRedirectURI) {
+		t.Fatalf("RegisterClient() error = %v, want %v", err, apperror.ErrInvalidRedirectURI)
+	}
+}
+
+func TestListClients(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectQuery("FROM clients").
+		WillReturnRows(sqlmock.NewRows([]string{"client_id", "name", "scope", "active", "redirect_uris"}).
+			AddRow("client-1", "My App", "read write", true, `{"http://app.test/cb"}`))
+
+	clients, err := NewClientService(db).ListClients(context.Background())
+	if err != nil {
+		t.Fatalf("ListClients() unexpected error: %v", err)
+	}
+	if len(clients) != 1 {
+		t.Fatalf("ListClients() returned %d clients, want 1", len(clients))
+	}
+	if clients[0].ClientID != "client-1" || len(clients[0].RedirectURIs) != 1 {
+		t.Errorf("unexpected client: %+v", clients[0])
+	}
+}
+
 func TestAuthenticateClientUnknown(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
