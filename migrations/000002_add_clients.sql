@@ -1,3 +1,5 @@
+-- 000002: registered application (API) clients and client-bound sessions
+-- +goose Up
 -- REGISTERED APPLICATIONS (API clients)
 CREATE TABLE clients (
     client_id           TEXT PRIMARY KEY, -- public identifier
@@ -16,3 +18,12 @@ ALTER TABLE sessions
     ADD COLUMN scope TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX idx_sessions_client_id ON sessions(client_id);
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_sessions_client_id;
+
+ALTER TABLE sessions
+    DROP COLUMN IF EXISTS client_id,
+    DROP COLUMN IF EXISTS scope;
+
+DROP TABLE IF EXISTS clients;

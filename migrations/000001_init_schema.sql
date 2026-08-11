@@ -1,7 +1,10 @@
+-- 000001: base schema (users, sessions, audit logs)
+-- +goose Up
 -- INSTALL EXTENTIONS IF NOT EXISTS
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- WRITE SYSTEM WIDE FUNCTIONS
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -9,6 +12,7 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 -- USER TABLE
 CREATE TYPE user_status AS ENUM ('active', 'suspended', 'deleted');
@@ -116,3 +120,11 @@ CREATE TABLE audit_logs (
 -- AUDIT LOG INDEXES
 CREATE INDEX idx_audit_logs_user_created
 ON audit_logs(user_id, created_at);
+
+-- +goose Down
+DROP TABLE IF EXISTS audit_logs;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS user_oauth_providers;
+DROP TABLE IF EXISTS users;
+DROP TYPE IF EXISTS user_status;
+DROP FUNCTION IF EXISTS update_updated_at_column();

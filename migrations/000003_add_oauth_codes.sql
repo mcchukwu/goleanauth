@@ -1,3 +1,6 @@
+-- 000003: OAuth 2.0 authorization codes, client redirect URIs, and nullable
+-- session user_id (machine sessions have no user).
+-- +goose Up
 -- AUTHORIZATION CODES for the OAuth 2.0 authorization code grant.
 -- Codes are single-use, short-lived, and stored as SHA-256 hashes to keep a
 -- DB leak from turning into usable tokens.
@@ -27,3 +30,12 @@ ALTER TABLE clients
 -- (the base schema declared it NOT NULL, which breaks client_credentials).
 ALTER TABLE sessions
     ALTER COLUMN user_id DROP NOT NULL;
+
+-- +goose Down
+DROP TABLE IF EXISTS authorization_codes;
+
+ALTER TABLE clients
+    DROP COLUMN IF EXISTS redirect_uris;
+
+ALTER TABLE sessions
+    ALTER COLUMN user_id SET NOT NULL;
