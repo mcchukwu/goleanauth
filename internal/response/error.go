@@ -74,10 +74,14 @@ func HandleError(w http.ResponseWriter, err error) {
 		Error(w, http.StatusUnauthorized, "invalid_token", "invalid token")
 	case errors.Is(err, apperror.ErrInvalidPassword):
 		Error(w, http.StatusUnauthorized, "invalid_password", "invalid password")
+	case errors.Is(err, apperror.ErrInvalidRequestBody):
+		Error(w, http.StatusBadRequest, "invalid_request_body", "invalid request body")
 
 		// USERS
 	case errors.Is(err, apperror.ErrUserNotFound):
 		Error(w, http.StatusConflict, "user_not_found", "user not found")
+	case errors.Is(err, apperror.ErrUserSuspended):
+		Error(w, http.StatusForbidden, "account_suspended", "account suspended")
 	case errors.Is(err, apperror.ErrEmailAlreadyExists):
 		Error(w, http.StatusConflict, "email_already_exists", "email already exists")
 	case errors.Is(err, apperror.ErrPhoneAlreadyExists):
